@@ -313,8 +313,9 @@ async function handleSubscription(request, env) {
     "X-Content-Type-Options": "nosniff",
     "Profile-Update-Interval": "24",
     "Profile-Title": `base64:${titleB64}`,
-    // 不使用引号，避免名称变成 \"myque.pages.dev\
-    "Content-Disposition": `attachment; filename=${safeHost}`,
+    // inline：浏览器直接显示 YAML；Clash 客户端仍可正常拉取
+    // filename 不带引号、不带 .yaml，避免配置名变成 \"xxx.yaml\
+    "Content-Disposition": `inline; filename=${safeHost}`,
     "X-Usque-Sub-Source": source,
     "X-Usque-Profile-Title": host
   };
