@@ -126,7 +126,7 @@ https://你的域名/<SUB_UUID>
 示例：
 
 ```text
-https://myque.pages.dev/8e020a7f-f056-4648-b400-1fe470d9c328
+https://myqdaeqwe.pages.dev/8e020a7f-f056-4648-b400-1fe470d9ch18
 ```
 
 ---
