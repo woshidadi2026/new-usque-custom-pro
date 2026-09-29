@@ -178,7 +178,7 @@ function nativeLoaded(label){
 }
 
 function selectedSni(){
- return $("sniPreset").value==="custom"?($("customSni").value.trim()||"consumer-masque.cloudflareclient.com"):$("sniPreset").value;
+ return $("sniPreset").value==="custom"?($("customSni").value.trim()||"speed.cloudflare.com"):$("sniPreset").value;
 }
 function selectedDns(){
  if($("dnsPreset").value==="custom")return uniq($("customDns").value.split(",").map(x=>x.trim()));
@@ -1394,8 +1394,8 @@ async function restoreSettingsFromKv(){
 }
 
 function resetRecommended(){
- $("endpointPreset").value="auto-curated";$("portPreset").value="recommended";$("sniPreset").value="www.microsoft.com";$("dnsPreset").value="cf-google-dual";
- $("innerIpMode").value="dual";$("networkMode").value="quic";$("stackMode").value="auto";$("ccMode").value="cubic";$("outerCc").value="";$("bbrProfile").value="standard";
+ $("endpointPreset").value="auto-curated";$("portPreset").value="recommended";$("sniPreset").value="speed.cloudflare.com";$("dnsPreset").value="cf-google-dual";
+ $("innerIpMode").value="dual";$("networkMode").value="quic";$("stackMode").value="auto";$("ccMode").value="bbr3";$("outerCc").value="bbr";$("bbrProfile").value="aggressive";
  $("mtuPreset").value="1280";$("handshakeTimeout").value="0";$("ruleMode").value="smart";$("healthUrl").value="http://cp.cloudflare.com/generate_204";
  $("healthInterval").value="300";$("healthTolerance").value="30";$("aiHealthMode").value="chatgpt";
  $("chatgptRouteMode").value="DIRECT";$("otherAiRouteMode").value="AI";$("chatgptDirectFallback").checked=true;

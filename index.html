@@ -6,12 +6,12 @@
   <meta name="color-scheme" content="dark">
   <meta name="description" content="Usque MASQUE 小白友好转换工具：网页一键注册并保存原生 config.json，再生成 Clash/Mihomo 智能分流；可选 US/JP/SG 等公开免费落地节点，并通过 WARP/MASQUE 中转连接。">
   <title>Usque MASQUE · 免费落地节点池</title>
-  <link rel="stylesheet" href="./style.css?v=621">
+  <link rel="stylesheet" href="./style.css?v=622">
 </head>
 <body>
 <main class="wrap pro-wrap">
   <header class="hero pro-hero">
-    <span class="badge">v6.21 · 设置持久化 + 手动推送订阅</span>
+    <span class="badge">v6.22 · SNI 列表更新</span>
     <h1>Usque MASQUE → Clash 小白版</h1>
 
     <a 
@@ -299,7 +299,16 @@
       <label>
         <span>SNI 域名</span>
         <select id="sniPreset">
-          <option value="www.microsoft.com">微软 | www.microsoft.com（推荐）</option>
+          <option value="speed.cloudflare.com">Cloudflare 测速 | speed.cloudflare.com（推荐）</option>
+          <option value="www.cloudflare.com">Cloudflare 官网 | www.cloudflare.com</option>
+          <option value="cdnjs.cloudflare.com">cdnjs | cdnjs.cloudflare.com</option>
+          <option value="challenges.cloudflare.com">Cloudflare Challenges | challenges.cloudflare.com</option>
+          <option value="www.shopify.com">Shopify | www.shopify.com</option>
+          <option value="www.hcaptcha.com">hCaptcha | www.hcaptcha.com</option>
+          <option value="unpkg.com">unpkg | unpkg.com</option>
+          <option value="cdn.jsdelivr.net">jsDelivr CDN | cdn.jsdelivr.net</option>
+          <option value="www.wto.org">世贸组织 | www.wto.org</option>
+          <option value="www.microsoft.com">微软 | www.microsoft.com</option>
           <option value="www.wikipedia.org">维基百科 | www.wikipedia.org</option>
           <option value="www.unilever.com">联合利华 | www.unilever.com</option>
           <option value="www.luckincoffee.com">瑞幸咖啡 | www.luckincoffee.com</option>
@@ -309,14 +318,9 @@
           <option value="www.harvard.edu">哈佛大学 | www.harvard.edu</option>
           <option value="www.mit.edu">麻省理工 | www.mit.edu</option>
           <option value="www.stanford.edu">斯坦福大学 | www.stanford.edu</option>
-          <option value="cdn.jsdelivr.net">CDN 分发 | cdn.jsdelivr.net</option>
           <option value="www.speedtest.net">SpeedTest | www.speedtest.net</option>
-          <option value="www.cloudflare.com">Cloudflare 官网 | www.cloudflare.com</option>
-          <option value="speed.cloudflare.com">Cloudflare 测速 | speed.cloudflare.com</option>
           <option value="cloudflare.dev">Cloudflare 开发者 | cloudflare.dev</option>
           <option value="research.cloudflare.com">Cloudflare 研究团队 | research.cloudflare.com</option>
-          <option value="consumer-masque.cloudflareclient.com">MASQUE 默认 | consumer-masque.cloudflareclient.com</option>
-          <option value="zt-masque.cloudflareclient.com">ZeroTrust 默认 | zt-masque.cloudflareclient.com</option>
           <option value="custom">自定义 SNI</option>
         </select>
       </label>
@@ -395,7 +399,7 @@
         <select id="ccMode">
           <option value="cubic">CUBIC（默认稳定）</option>
           <option value="bbr">BBR</option>
-          <option value="bbr3">BBR3</option>
+          <option value="bbr3" selected>BBR3</option>
           <option value="reno">RENO</option>
         </select>
       </label>
@@ -404,7 +408,7 @@
         <span>外层拥塞控制</span>
         <select id="outerCc">
           <option value="">关闭（默认）</option>
-          <option value="bbr">BBR</option>
+          <option value="bbr" selected>BBR</option>
         </select>
       </label>
 
@@ -413,7 +417,7 @@
         <select id="bbrProfile">
           <option value="standard">standard（推荐）</option>
           <option value="conservative">conservative</option>
-          <option value="aggressive">aggressive</option>
+          <option value="aggressive" selected>aggressive</option>
         </select>
       </label>
 
@@ -807,7 +811,7 @@
 
 <div id="toastStack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
 
-<script src="./usque-register.js?v=621"></script>
-<script src="./app.js?v=621"></script>
+<script src="./usque-register.js?v=622"></script>
+<script src="./app.js?v=622"></script>
 </body>
 </html>
