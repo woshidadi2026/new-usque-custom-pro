@@ -42,6 +42,7 @@ const CLASH_DOMAIN_RULESETS=[
 ["hbo","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/hbo.mrs"],
 ["emby","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-emby.mrs"],
 ["telegram","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/telegram.mrs"],
+["github","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/github.mrs"],
 ["microsoft","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/microsoft.mrs"],
 ["apple","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/apple.mrs"],
 ["cloudflare","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cloudflare.mrs"],
@@ -541,7 +542,7 @@ function iconUrl(name){
  const base="https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/";
  const map={
   "自动选择":"Rocket.png","AI自动选择":"ChatGPT.png","地区优选":"Global.png","出口检测":"Speedtest.png","PROXY":"Proxy.png","AI":"ChatGPT.png","YouTube":"YouTube.png","Emby":"Emby.png","TikTok":"TikTok.png",
-  "Netflix":"Netflix.png","Disney":"Disney.png","Spotify":"Spotify.png","GitHub":"GitHub.png","Telegram":"Telegram.png",
+  "Netflix":"Netflix.png","Disney":"Disney.png","Spotify":"Spotify.png","GitHub":"GitHub.png","🐙 GitHub":"GitHub.png","Telegram":"Telegram.png",
   "Google":"Google_Search.png","Twitter":"Twitter.png","Instagram":"Instagram.png","Facebook":"Facebook.png","Apple":"Apple_1.png",
   "Microsoft":"Microsoft.png","Steam":"Steam.png","Xbox":"Xbox.png","PlayStation":"PlayStation_1.png","Nintendo":"Nintendo.png",
   "Porn":"Pornhub_1.png","国外网站":"Global.png","🐟 漏网之鱼":"Final.png","Bilibili":"bilibili.png"
@@ -829,6 +830,12 @@ function clashGroupsAndRules(names,o){
  if(freeOn)appendCountryChoices(a,o);
  a.push('      - "♻️ 自动选择"','      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
+ // GitHub 独立策略组：默认 WARP，避免被 microsoft 规则集吞掉后走直连
+ groupHeader(a,"🐙 GitHub");
+ a.push("    proxies:",'      - "🚀 WARP自动"','      - "🚀 节点选择"','      - "♻️ 自动选择"');
+ if(freeOn)appendCountryChoices(a,o);
+ a.push('      - "🌎 WARP可手动"','      - "🎯 全球直连"');
+
  groupHeader(a,"Ⓜ️ 微软服务");
  a.push("    proxies:",'      - "🎯 全球直连"','      - "🚀 节点选择"');
  if(freeOn)appendCountryChoices(a,o);
@@ -936,6 +943,9 @@ function clashGroupsAndRules(names,o){
    "  # Telegram",
    "  - RULE-SET,telegram,✈️ 电报信息",
    "  - RULE-SET,telegram_ip,✈️ 电报信息,no-resolve",
+   "",
+   "  # GitHub（必须在 microsoft 之前，microsoft 规则集也包含 GitHub 域名）",
+   "  - RULE-SET,github,🐙 GitHub",
    "",
    "  # Microsoft / Apple",
    "  - RULE-SET,microsoft,Ⓜ️ 微软服务",
