@@ -47,7 +47,8 @@ const CLASH_DOMAIN_RULESETS=[
 ["apple","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/apple.mrs"],
 ["cloudflare","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cloudflare.mrs"],
 ["geolocation-!cn","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/geolocation-!cn.mrs"],
-["category-ads-all","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ads-all.mrs"]
+["category-ads-all","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ads-all.mrs"],
+["anti-ad","https://raw.githubusercontent.com/privacy-protection-tools/anti-AD/master/anti-ad-clash.yaml"]
 ];
 const CLASH_IP_RULESETS=[
 ["private_ip","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo-lite/geoip/private.mrs"],
@@ -846,6 +847,10 @@ function clashGroupsAndRules(names,o){
  if(freeOn)appendCountryChoices(a,o);
  a.push('      - "♻️ 自动选择"','      - "🌎 WARP可手动"');
 
+ groupHeader(a,"☁️ Cloudflare中国");
+ a.push("    proxies:",'      - "🚀 WARP自动"','      - "🎯 全球直连"','      - "🚀 节点选择"');
+ a.push('      - "🌎 WARP可手动"','      - "♻️ 自动选择"');
+
  groupHeader(a,"☁️ CloudflareCDN");
  a.push("    proxies:",'      - "🚀 节点选择"','      - "♻️ 自动选择"');
  if(freeOn)appendCountryChoices(a,o);
@@ -905,7 +910,12 @@ function clashGroupsAndRules(names,o){
    "rule-providers:"
  );
  for(const [tag,url] of CLASH_DOMAIN_RULESETS){
-   a.push(`  ${tag}:`,`    <<: *domain`,`    url: ${url}`);
+   // anti-AD 为 Clash YAML（payload），不能用 mrs 锚点
+   if(tag==="anti-ad"){
+     a.push(`  ${tag}:`,"    type: http","    behavior: domain","    format: yaml","    interval: 43200",`    url: ${url}`);
+   }else{
+     a.push(`  ${tag}:`,`    <<: *domain`,`    url: ${url}`);
+   }
    if(freeOn&&o.freeUseWarp)a.push('    proxy: "WARP中转"');
  }
  for(const [tag,url] of CLASH_IP_RULESETS){
@@ -915,7 +925,11 @@ function clashGroupsAndRules(names,o){
 
  a.push("","rules:");
  if(o.adBlock){
-   a.push("  - RULE-SET,category-ads-all,🛑 全球拦截","  - RULE-SET,ad_ip,🛑 全球拦截,no-resolve");
+   a.push(
+     "  - RULE-SET,anti-ad,🛑 全球拦截",
+     "  - RULE-SET,category-ads-all,🛑 全球拦截",
+     "  - RULE-SET,ad_ip,🛑 全球拦截,no-resolve"
+   );
  }
  a.push(
    "  - RULE-SET,private_ip,🎯 全球直连,no-resolve",
@@ -950,6 +964,10 @@ function clashGroupsAndRules(names,o){
    "  # Microsoft / Apple",
    "  - RULE-SET,microsoft,Ⓜ️ 微软服务",
    "  - RULE-SET,apple,🍎 苹果服务",
+   "",
+   "  # Cloudflare 中国站（优先 WARP → 直连 → 节点）",
+   "  - DOMAIN,www.cloudflare-cn.com,☁️ Cloudflare中国",
+   "  - DOMAIN-SUFFIX,cloudflare-cn.com,☁️ Cloudflare中国",
    "",
    "  # Cloudflare",
    "  - RULE-SET,cloudflare,☁️ CloudflareCDN",
