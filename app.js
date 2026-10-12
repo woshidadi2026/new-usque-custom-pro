@@ -4,7 +4,8 @@ const $ = id => document.getElementById(id);
 const q = v => JSON.stringify(String(v ?? ""));
 const bool = v => v ? "true" : "false";
 
-let source=null, sourceText="", currentFormat="native", helperText="", cooldownTimer=null;
+let source=null, sourceText="", sourceInner=null, sourceInnerText="", currentFormat="native", helperText="", cooldownTimer=null;
+const MOM_WAIT_SECONDS=120; // 外层注册后等待再注册内层，降低 1015 限流
 let bridgeUuid=crypto.randomUUID?crypto.randomUUID():"11111111-1111-4111-8111-111111111111";
 
 const ENDPOINTS={
@@ -121,6 +122,21 @@ function pemBody(v){return String(v||"").replace(/-----BEGIN PUBLIC KEY-----/g,"
 function cidr4(v){return !v?"":String(v).includes("/")?String(v):String(v)+"/32"}
 function cidr6(v){return !v?"":String(v).includes("/")?String(v):String(v)+"/128"}
 function uniq(a){return [...new Set(a.filter(Boolean))]}
+function formatBeijing(iso){
+  if(!iso)return "—";
+  try{
+    const d=new Date(iso);
+    if(Number.isNaN(d.getTime()))return String(iso);
+    const s=new Intl.DateTimeFormat("zh-CN",{
+      timeZone:"Asia/Shanghai",
+      year:"numeric",month:"2-digit",day:"2-digit",
+      hour:"2-digit",minute:"2-digit",second:"2-digit",
+      hour12:false
+    }).format(d);
+    return s.replace(/\//g,"-")+" 北京时间";
+  }catch{return String(iso)}
+}
+
 
 const CUSTOM_IP_TARGETS=new Set(["US","JP","SG","HK","TW","KR","FREE","WARP","DIRECT"]);
 function normalizeCustomIpTarget(v){
@@ -512,17 +528,25 @@ function updateEstimate(){
  if(actual<target && net!=="h2"){
    shortage+=" · 想要 100+ 可切换 H2 / TCP 扩展池";
  }
+ const momN=sourceInner?momConnectionPairs().length:0;
+ const momPart=momN?` · MoM ${momN} 个`:" · 尚未注册内层 MoM";
  $("nodeEstimate").textContent=
-   `预计生成：${actual} 个节点${shortage} · ${$("networkMode").selectedOptions[0].textContent} · ${$("ruleMode").selectedOptions[0].textContent}`;
+   `预计生成：${actual} 个外层节点${momPart}${shortage} · ${$("networkMode").selectedOptions[0].textContent} · ${$("ruleMode").selectedOptions[0].textContent}`;
 }
 
-function makeNode(a,name,server,port,o){
- const ips=innerIps();
+function makeNode(a,name,server,port,o,cfg=null,dialerProxy=null){
+ const use=cfg||source;
+ if(!use)throw new Error("缺少 MASQUE config");
+ const ips=cfg?{
+   v4:cidr4(cfg.ipv4||""),
+   v6:cidr6(cfg.ipv6||"")
+ }:innerIps();
  const udp=o.network==="h3-l4proxy"?false:o.udp;
  a.push(
   `  - name: ${q(name)}`,"    type: masque",`    server: ${q(server)}`,`    port: ${Number(port)}`,
-  `    private-key: ${q(source.private_key)}`,`    public-key: ${q(pemBody(source.endpoint_pub_key))}`
+  `    private-key: ${q(use.private_key)}`,`    public-key: ${q(pemBody(use.endpoint_pub_key))}`
  );
+ if(dialerProxy)a.push(`    dialer-proxy: ${q(dialerProxy)}`);
  if(ips.v4)a.push(`    ip: ${q(ips.v4)}`);
  if(ips.v6)a.push(`    ipv6: ${q(ips.v6)}`);
  a.push(`    mtu: ${o.mtu}`,`    udp: ${bool(udp)}`,`    sni: ${q(o.sni)}`);
@@ -539,6 +563,30 @@ function makeNode(a,name,server,port,o){
  if(o.handshake)a.push(`    handshake-timeout: ${o.handshake}`);
 }
 
+/** MoM 节点：与外层共用同一套节点数量 / Endpoint×Port 生成逻辑 */
+function momConnectionPairs(){
+  // 直接复用 connectionPairs()，使「节点数量模式」「端口」「端点」「生成策略」等高级设置同时作用于 MoM
+  return connectionPairs();
+}
+
+function momNodeName(server,port,i){
+ const tag=($("nodeTag")?.value||"CDN").trim()||"CDN";
+ return `MoM-${tag}-${String(i+1).padStart(2,"0")}|${server}|${port}`;
+}
+
+function appendMomNodes(a,o){
+ const names=[];
+ if(!sourceInner)return names;
+ const pairs=momConnectionPairs();
+ pairs.forEach(([server,port],i)=>{
+   const n=momNodeName(server,port,i);
+   names.push(n);
+   // 内层走外层「🚀 WARP自动」策略组
+   makeNode(a,n,server,port,o,sourceInner,"🚀 WARP自动");
+ });
+ return names;
+}
+
 function iconUrl(name){
  const base="https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/";
  const map={
@@ -546,7 +594,7 @@ function iconUrl(name){
   "Netflix":"Netflix.png","Disney":"Disney.png","Spotify":"Spotify.png","GitHub":"GitHub.png","🐙 GitHub":"GitHub.png","Telegram":"Telegram.png",
   "Google":"Google_Search.png","Twitter":"Twitter.png","Instagram":"Instagram.png","Facebook":"Facebook.png","Apple":"Apple_1.png",
   "Microsoft":"Microsoft.png","Steam":"Steam.png","Xbox":"Xbox.png","PlayStation":"PlayStation_1.png","Nintendo":"Nintendo.png",
-  "Porn":"Pornhub_1.png","国外网站":"Global.png","🐟 漏网之鱼":"Final.png","Bilibili":"bilibili.png"
+  "Porn":"Pornhub_1.png","国外网站":"Global.png","🐟 漏网之鱼":"Final.png","Bilibili":"bilibili.png","🔄 MasqueOverMasque":"Global.png","🤖 AI":"ChatGPT.png"
  };
  return base+(map[name]||"Proxy.png");
 }
@@ -703,6 +751,18 @@ function clashGroupsAndRules(names,o){
  groupHeader(a,"WARP中转");
  a.push("    hidden: true","    proxies:",'      - "🚀 WARP自动"','      - "🌎 WARP可手动"');
 
+ // Masque Over Masque：内层节点 dialer-proxy → 🚀 WARP自动
+ if(o.momNames&&o.momNames.length){
+   groupHeader(a,"🔄 MasqueOverMasque","url-test");
+   a.push(
+     `    url: ${q(o.healthUrl)}`,
+     `    interval: ${Number(o.healthInterval)||300}`,
+     `    tolerance: ${Number(o.tolerance)||30}`,
+     "    timeout: 8000","    lazy: false","    max-failed-times: 2","    proxies:"
+   );
+   for(const n of o.momNames)a.push(`      - ${q(n)}`);
+ }
+
  if(freeOn){
    groupHeader(a,"⚡ 免费落地自动","url-test");
    a.push(
@@ -772,6 +832,7 @@ function clashGroupsAndRules(names,o){
 
  groupHeader(a,"🚀 节点选择");
  a.push("    proxies:",'      - "♻️ 自动选择"','      - "🛡️ 故障转移"','      - "⚖️ 负载均衡"');
+ if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
  if(freeOn)appendCountryChoices(a,o);
  if(freeOn)a.push('      - "🌍 免费落地可手动"');
  a.push('      - "🌎 WARP可手动"','      - "🚀 WARP自动"',"      - DIRECT");
@@ -782,19 +843,21 @@ function clashGroupsAndRules(names,o){
  groupHeader(a,"🛑 全球拦截");
  a.push("    proxies:","      - REJECT","      - REJECT-DROP");
 
- // AI
+ // AI：优先 Masque Over Masque
  groupHeader(a,"🤖 AI");
  a.push("    proxies:");
+ if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
  if(freeOn&&freeForService(o,"AI"))a.push('      - "🤖 AI自动优选"');
  if(freeOn)appendCountryChoices(a,o);
  a.push('      - "🚀 节点选择"');
  if(freeOn)a.push('      - "🌍 免费落地可手动"');
  a.push('      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
- // Streaming
+ // Streaming（含 MoM，不强制优先）
  groupHeader(a,"🎬 流媒体");
  a.push("    proxies:");
  if(freeOn)a.push('      - "🎬 流媒体自动优选"');
+ if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
  if(freeOn)appendCountryChoices(a,o);
  a.push('      - "🚀 节点选择"');
  if(freeOn)a.push('      - "🌍 免费落地可手动"');
@@ -823,17 +886,22 @@ function clashGroupsAndRules(names,o){
    a.push('      - "⚡ YouTube-免费极速"');
    appendCountryChoices(a,o);
  }
+ if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
  a.push('      - "🚀 节点选择"','      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
  // Reference-style service groups
  groupHeader(a,"✈️ 电报信息");
- a.push("    proxies:",'      - "🚀 节点选择"');
+ a.push("    proxies:");
+ if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
+ a.push('      - "🚀 节点选择"');
  if(freeOn)appendCountryChoices(a,o);
  a.push('      - "♻️ 自动选择"','      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
  // GitHub 独立策略组：默认 WARP，避免被 microsoft 规则集吞掉后走直连
  groupHeader(a,"🐙 GitHub");
- a.push("    proxies:",'      - "🚀 WARP自动"','      - "🚀 节点选择"','      - "♻️ 自动选择"');
+ a.push("    proxies:");
+ if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
+ a.push('      - "🚀 WARP自动"','      - "🚀 节点选择"','      - "♻️ 自动选择"');
  if(freeOn)appendCountryChoices(a,o);
  a.push('      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
@@ -857,12 +925,16 @@ function clashGroupsAndRules(names,o){
  a.push('      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
  groupHeader(a,"🌐 国外网站");
- a.push("    proxies:",'      - "🚀 WARP自动"','      - "🚀 节点选择"','      - "♻️ 自动选择"');
+ a.push("    proxies:");
+ if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
+ a.push('      - "🚀 WARP自动"','      - "🚀 节点选择"','      - "♻️ 自动选择"');
  if(freeOn)appendCountryChoices(a,o);
  a.push('      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
  groupHeader(a,"🐟 漏网之鱼");
- a.push("    proxies:",'      - "🚀 节点选择"','      - "♻️ 自动选择"');
+ a.push("    proxies:");
+ if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
+ a.push('      - "🚀 WARP自动"','      - "🚀 节点选择"','      - "♻️ 自动选择"');
  if(freeOn)appendCountryChoices(a,o);
  a.push('      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
@@ -1009,6 +1081,8 @@ function buildClash(){
   "","proxies:"
  );
  pairs.forEach(([server,port],i)=>{const n=nodeName(server,port,i);names.push(n);makeNode(a,n,server,port,o)});
+ const momNames=appendMomNodes(a,o);
+ if(momNames.length)o.momNames=momNames;
  appendFreeProviders(a,o);
  a.push(...clashGroupsAndRules(names,o));
  return a.join("\n");
@@ -1117,12 +1191,14 @@ function setFormat(fmt){
   $("outputTitle").textContent="原生 Usque config.json";$("outputDesc").textContent="所有转换的源文件，建议优先备份。";$("mainOutput").value=sourceText;
  }
  if(fmt==="clash"){
-  $("outputTitle").textContent="Clash / Mihomo 完整智能分流";$("outputDesc").textContent=`${connectionPairs().length} 个 MASQUE 节点；ChatGPT/OpenAI 当前出口：${$("chatgptRouteMode").selectedOptions[0].textContent}。`;
-  $("mainOutput").value=buildClash();setNotice(
-   $("chatgptRouteMode").value==="DIRECT"
-   ? "<b>AI 简单模式：</b>ChatGPT/OpenAI 已单独走 DIRECT；YouTube/Netflix/Google 等仍按原 WARP 分流。无需运行 Python/BAT 出口检测器。"
-   : "<b>AI 出口模式：</b>ChatGPT/OpenAI 当前使用所选 WARP/AI 策略。若仍出现 Unable to load site，可切回 DIRECT，或使用高级出口检测器筛选可用 WARP 出口。",
-   "ok"
+  $("outputTitle").textContent="Clash / Mihomo 完整智能分流";
+  $("outputDesc").textContent=`${connectionPairs().length} 个外层节点`+(sourceInner?` + ${momConnectionPairs().length} 个 MoM`:"")+`；AI 优先 Masque Over Masque。`;
+  $("mainOutput").value=buildClash();
+  setNotice(
+    sourceInner
+      ? "<b>AI 出口：</b>已注册内层 MoM，策略组「🤖 AI」优先走 <b>🔄 MasqueOverMasque</b>（本机 → 外层 WARP → 内层 MASQUE）。ChatGPT/OpenAI 等不走直连。"
+      : "<b>AI 出口：</b>尚未注册内层 MoM。请先完成双层注册，AI 才会优先走 Masque Over Masque；当前回退到节点选择 / 免费落地 / WARP。",
+    sourceInner ? "ok" : "warn"
   );
  }
  if(fmt==="shadowrocket"){
@@ -1189,7 +1265,7 @@ function updateConfigKvStatus(has,meta,err){
   }
   if(has){
     el.className="config-kv-status ok";
-    const t=meta?.updated_at?`，更新于 ${meta.updated_at}`:"";
+    const t=meta?.updated_at?`，更新于 ${formatBeijing(meta.updated_at)}`:"";
     el.textContent=`KV 状态：已保存原生 config.json${t}（刷新后自动恢复）`;
   }else{
     el.className="config-kv-status";
@@ -1246,24 +1322,173 @@ async function clearConfigFromKv(){
   }
 }
 
+function sleepMs(ms){return new Promise(r=>setTimeout(r,ms))}
+
+async function waitWithCountdown(seconds,label){
+  let left=Math.max(1,Number(seconds)||MOM_WAIT_SECONDS);
+  const b=$("regStart");
+  while(left>0){
+    const m=Math.floor(left/60),s=left%60;
+    const t=m>0?`${m}分${String(s).padStart(2,"0")}秒`:`${s}秒`;
+    if(b)b.textContent=`⏳ ${label}（${t}）`;
+    setStatus(`${label}，剩余 ${t}。请勿关闭页面。`,"working");
+    await sleepMs(1000);
+    left--;
+  }
+}
+
+function applyInnerConfig(d,label){
+  sourceInner=d;
+  sourceInnerText=JSON.stringify(d,null,2);
+  updateMomKvStatus(true,{updated_at:new Date().toISOString(),label});
+  updateEstimate();
+}
+
+async function persistInnerConfigToKv(label=""){
+  if(!sourceInner)return false;
+  try{
+    const res=await fetch("/api/config/inner/save",{
+      method:"POST",
+      credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({config:sourceInner,label:label||"usque-config-inner-mom"})
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok)throw new Error(data.message||`HTTP ${res.status}`);
+    updateMomKvStatus(true,data.meta);
+    toast("内层 MoM 已写入 KV。","success","内层已保存");
+    return true;
+  }catch(e){
+    toast("内层保存到 KV 失败："+e.message,"warning","KV 保存失败");
+    updateMomKvStatus(false,null,e.message);
+    return false;
+  }
+}
+
+function updateMomKvStatus(has,meta,err){
+  const el=$("momKvStatus");
+  if(!el)return;
+  if(err){
+    el.className="config-kv-status error";
+    el.textContent="内层 MoM：保存/读取失败 — "+err;
+    return;
+  }
+  if(has&&sourceInner){
+    el.className="config-kv-status ok";
+    const t=meta?.updated_at?`，更新于 ${formatBeijing(meta.updated_at)}`:"";
+    const id=sourceInner.id?String(sourceInner.id).slice(0,8)+"…":"";
+    el.textContent=`内层 MoM：已就绪${id?"（"+id+"）":""}${t} · AI 将优先走 MasqueOverMasque`;
+  }else{
+    el.className="config-kv-status";
+    el.textContent="内层 MoM：尚未注册。已有外层时可只注册内层；全新环境会自动外层→等待→内层。";
+  }
+}
+
+async function restoreInnerConfigFromKv(){
+  try{
+    const res=await fetch("/api/config/inner/load",{cache:"no-store",credentials:"same-origin"});
+    if(!res.ok)return false;
+    const data=await res.json();
+    if(!data.kv_bound||!data.has_config||!data.config){
+      updateMomKvStatus(false,null);
+      return false;
+    }
+    applyInnerConfig(data.config, data.meta?.label || "KV 内层 MoM");
+    toast("已从 KV 恢复内层 MoM config。","success","内层已恢复");
+    return true;
+  }catch(e){
+    updateMomKvStatus(false,null,e.message);
+    return false;
+  }
+}
+
+async function clearInnerConfigFromKv(){
+  if(!confirm("确定清除 KV 中的内层 MoM config？不影响外层 WARP。"))return;
+  try{
+    const res=await fetch("/api/config/inner/clear",{
+      method:"POST",
+      credentials:"same-origin",
+      headers:{"Content-Type":"application/json"}
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok)throw new Error(data.message||`HTTP ${res.status}`);
+    sourceInner=null;sourceInnerText="";
+    updateMomKvStatus(false,null);
+    updateEstimate();
+    toast("内层 MoM 已清除。","success","已清除");
+  }catch(e){
+    toast("清除内层失败："+e.message,"error","清除失败");
+  }
+}
+
+async function registerInnerOnly(deviceName){
+  const d=await window.UsqueRegister.registerDevice({
+    deviceName:(deviceName||"Web-Usque")+"-MoM",
+    onStep:(n,msg)=>setStatus(`内层 MoM 步骤 ${n}/4：${msg}`,"working")
+  });
+  applyInnerConfig(d,"网页注册内层 MoM");
+  await persistInnerConfigToKv("网页注册内层 MoM");
+  return d;
+}
+
 async function register(){
  if(!$("regTos").checked){setStatus("请先勾选条款确认框","error");return}
  if(!window.UsqueRegister){setStatus("注册模块未加载","error");return}
  $("regStart").disabled=true;
+ const deviceName=$("regDeviceName").value.trim()||"Web-Usque";
  try{
-  const d=await window.UsqueRegister.registerDevice({deviceName:$("regDeviceName").value.trim()||"Web-Usque",onStep:(n,msg)=>setStatus(`步骤 ${n}/4：${msg}`,"working")});
+  // 已有外层：再注册一层作为内层 MoM（不覆盖外层）
+  if(source&&source.private_key){
+    if(sourceInner&&sourceInner.private_key){
+      if(!confirm("外层与内层 MoM 都已存在。继续将重新注册内层（覆盖旧内层），外层保持不变。是否继续？")){
+        $("regStart").disabled=false;
+        $("regStart").textContent="🚀 一键注册";
+        setStatus("已取消。外层与内层均保持原样。","");
+        return;
+      }
+    }
+    setStatus("检测到已有外层 WARP，开始注册内层 MoM…","working");
+    toast("已有外层，将再注册一层作为内层 Masque Over Masque。","info","内层注册");
+    await registerInnerOnly(deviceName);
+    setStatus("内层 MoM 注册成功。可直接应用设置 / 生成 Clash（AI 优先 MoM）。","ok");
+    $("regStart").textContent="✅ 内层 MoM 已注册";
+    $("regStart").disabled=false;
+    try{setFormat(currentFormat==="native"?"clash":currentFormat)}catch(_){}
+    return;
+  }
+
+  // 外层、内层都没有：注册外层 → 等待 → 注册内层
+  setStatus("未检测到 WARP，步骤 1/2：注册外层…","working");
+  const d=await window.UsqueRegister.registerDevice({
+    deviceName,
+    onStep:(n,msg)=>setStatus(`外层步骤 ${n}/4：${msg}`,"working")
+  });
   source=d;sourceText=JSON.stringify(d,null,2);enableOutputs();nativeLoaded("网页注册生成的 usque-config.json");
-  $("regSummary").classList.remove("hidden");$("regSummary").textContent=`注册成功\nendpoint_v4: ${d.endpoint_v4||"(无)"}\nendpoint_v6: ${d.endpoint_v6||"(无)"}\nipv4: ${d.ipv4||"(无)"}\nipv6: ${d.ipv6||"(无)"}`;
-  setStatus("注册成功！已先生成原生 config.json。正在写入 KV…","ok");
-  settingsDirty=false;setSettingsState("clean","注册成功，当前设置已应用");
-  toast("Usque 注册成功，原生 config.json 已生成。","success","注册成功");
-  $("regStart").textContent="✅ 本次注册完成";
+  $("regSummary").classList.remove("hidden");
+  $("regSummary").textContent=`外层注册成功\nendpoint_v4: ${d.endpoint_v4||"(无)"}\nendpoint_v6: ${d.endpoint_v6||"(无)"}\nipv4: ${d.ipv4||"(无)"}\nipv6: ${d.ipv6||"(无)"}`;
+  setStatus("外层注册成功，正在写入 KV…","ok");
+  settingsDirty=false;setSettingsState("clean","外层注册成功");
+  toast("外层 WARP 注册成功。","success","外层完成");
   if($("autoDownloadConfig").checked)setTimeout(()=>download("usque-config.json",sourceText,"application/json"),180);
-  // 永久保存到 KV
-  persistConfigToKv("网页注册生成的 usque-config.json").catch(()=>{});
+  await persistConfigToKv("网页注册生成的 usque-config.json");
+
+  // 等待几分钟再注册内层，降低 Cloudflare 1015
+  await waitWithCountdown(MOM_WAIT_SECONDS,"外层已完成，等待后注册内层 MoM");
+
+  setStatus("步骤 2/2：注册内层 MoM…","working");
+  toast("开始注册内层 Masque Over Masque…","info","内层注册");
+  await registerInnerOnly(deviceName);
+
+  setStatus("外层 + 内层均已注册。生成 Clash 后 AI 将优先使用 MasqueOverMasque。","ok");
+  $("regStart").textContent="✅ 外层+内层均已完成";
+  $("regStart").disabled=false;
+  try{setFormat("clash")}catch(_){}
+  toast("双层注册完成：外层 WARP + 内层 MoM。","success","全部完成");
  }catch(e){
-  if(e?.status===429||e?.code===1015||/1015|rate.?limit|限流/i.test(String(e?.message||""))){startCooldown(e?.retryAfter||30);return}
-  setStatus("注册失败："+e.message,"error");toast("注册失败："+e.message,"error","注册失败");$("regStart").disabled=false;
+  if(e?.status===429||e?.code===1015||/1015|rate.?limit|限流/i.test(String(e?.message||""))){startCooldown(e?.retryAfter||Math.max(30,MOM_WAIT_SECONDS));return}
+  setStatus("注册失败："+e.message,"error");toast("注册失败："+e.message,"error","注册失败");
+  $("regStart").disabled=false;
+  $("regStart").textContent="🚀 一键注册";
  }
 }
 function startCooldown(seconds){
@@ -1307,16 +1532,18 @@ function updateFreeEgressHint(){
 function updateChatgptRouteHint(){
  const mode=$("chatgptRouteMode").value;
  const labels={
-   "DIRECT":"DIRECT 直连",
+   "DIRECT":"DIRECT 直连（不推荐）",
    "AI自动选择":"WARP · AI 自动选择",
    "地区优选":"WARP · 地区优选",
    "PROXY":"WARP · PROXY",
-   "AI":"AI 策略组"
+   "AI":"AI 策略组（优先 MoM）"
  };
  const other=$("otherAiRouteMode").selectedOptions?.[0]?.textContent||$("otherAiRouteMode").value;
  $("chatgptRouteHint").textContent=
    `当前：ChatGPT/OpenAI → ${labels[mode]||mode}；其它 AI → ${other}。`+
-   (mode==="DIRECT"?" 这是最简单方案，不需要运行出口检测脚本。":"");
+   (sourceInner
+     ? " 已注册内层：生成配置时「🤖 AI」优先 🔄 MasqueOverMasque。"
+     : " 尚未注册内层 MoM 时无法使用双层链路，请先完成一键注册。");
 }
 
 /* ---------------- 界面设置持久化（KV） ---------------- */
@@ -1426,7 +1653,7 @@ function resetRecommended(){
  $("innerIpMode").value="dual";$("networkMode").value="quic";$("stackMode").value="auto";$("ccMode").value="bbr3";$("outerCc").value="bbr";$("bbrProfile").value="aggressive";
  $("mtuPreset").value="1280";$("handshakeTimeout").value="0";$("ruleMode").value="smart";$("healthUrl").value="http://cp.cloudflare.com/generate_204";
  $("healthInterval").value="300";$("healthTolerance").value="30";$("aiHealthMode").value="chatgpt";
- $("chatgptRouteMode").value="DIRECT";$("otherAiRouteMode").value="AI";$("chatgptDirectFallback").checked=true;
+ $("chatgptRouteMode").value="AI";$("otherAiRouteMode").value="AI";$("chatgptDirectFallback").checked=false;
  $("egressCountry1").value="";$("egressCountry2").value="";$("egressCountry3").value="";
  $("controllerUrl").value="http://127.0.0.1:9090";$("controllerSecret").value="";$("localProxyUrl").value="http://127.0.0.1:7890";
  $("egressChatgptFirst").checked=true;$("egressApplyAll").checked=false;$("enableControllerApi").checked=true;
@@ -1531,7 +1758,7 @@ const drop=$("configDrop");
 drop.addEventListener("drop",e=>filePicked(e.dataTransfer.files?.[0]));
 
 $("fmtNative").addEventListener("click",()=>{setFormat("native");toast("已切换到原生 Usque config.json。","success","格式已生成")});
-$("fmtClash").addEventListener("click",()=>{try{setFormat("clash");toast(`Clash / Mihomo 配置已生成，共 ${connectionPairs().length} 个节点。`,"success","格式已生成")}catch(e){toast(e.message,"error","生成失败")}});
+$("fmtClash").addEventListener("click",()=>{try{setFormat("clash");toast(`Clash / Mihomo 配置已生成，共 ${connectionPairs().length} 个外层`+(sourceInner?` + ${momConnectionPairs().length} 个 MoM`:"")+` 节点。`,"success","格式已生成")}catch(e){toast(e.message,"error","生成失败")}});
 $("fmtShadowrocket").addEventListener("click",()=>{try{setFormat("shadowrocket");toast(`Shadowrocket 配置已生成，共 ${connectionPairs().length} 个节点。`,"success","格式已生成")}catch(e){toast(e.message,"error","生成失败")}});
 $("fmtSingbox").addEventListener("click",()=>{try{setFormat("singbox");toast("sing-box 兼容配置已生成。","success","格式已生成")}catch(e){toast(e.message,"error","生成失败")}});
 $("fmtVless").addEventListener("click",()=>{try{setFormat("vless");toast("VLESS 本地桥接配置已生成。","success","格式已生成")}catch(e){toast(e.message,"error","生成失败")}});
@@ -1593,12 +1820,20 @@ async function refreshSubInfo(showToast=false){
     else parts.push("✅ KV 已绑定");
     if(!info.uuid)parts.push("⚠ 未配置 <code>SUB_UUID</code>");
     else parts.push("✅ SUB_UUID 已配置");
+    if(info.auto_rebuild){
+      parts.push(`🔄 自动重建：已开启（TTL ${info.sub_ttl_hours||4} 小时，订阅拉取时过期会服务端重建）`);
+      if(info.has_outer_config)parts.push("✅ 外层 config 已就绪，可自动生成");
+      else parts.push("⚠ 外层 config 未注册，自动重建不可用");
+    }
     if(info.has_content){
       parts.push(`✅ 已有订阅内容（${formatSubBytes(info.bytes)}，来源 ${info.source||"?"}）`);
-      if(info.meta?.updated_at)parts.push(`更新时间：${info.meta.updated_at}`);
+      if(info.sub_fresh===false)parts.push("⏳ 内容已过期，下次客户端刷新订阅时将自动重建");
+      else if(info.sub_fresh===true)parts.push("✅ 内容仍在有效期内");
+      if(info.meta?.updated_at)parts.push(`更新时间：${formatBeijing(info.meta.updated_at)}`);
+      if(info.meta?.expires_at)parts.push(`预计过期：${formatBeijing(info.meta.expires_at)}`);
       if(info.meta?.note)parts.push(`备注：${info.meta.note}`);
     }else{
-      parts.push("尚无内容：请先生成 Clash，再点击「推送当前 Clash 到订阅」");
+      parts.push("尚无内容：完成注册后，客户端刷新订阅即可自动生成；也可手动「推送」或「服务端重建」");
     }
     const kind=(!info.kv_bound||!info.uuid)?"warn":(info.has_content?"ok":"warn");
     setSubStatus(parts.join("<br>"),kind);
@@ -1666,7 +1901,7 @@ async function pushClashToSubscription(opts={}){
     if(data.url&&$("subUrlInput"))$("subUrlInput").value=data.url;
     setSubStatus(
       `✅ 已推送到在线订阅<br>链接：<code>${data.url||"(请刷新状态)"}</code><br>大小：${formatSubBytes(data.bytes)}`+
-      (data.meta?.updated_at?`<br>时间：${data.meta.updated_at}`:""),
+      (data.meta?.updated_at?`<br>时间：${formatBeijing(data.meta.updated_at)}`:""),
       "ok"
     );
     toast(
@@ -1684,6 +1919,36 @@ async function pushClashToSubscription(opts={}){
     return false;
   }finally{
     if(btn){btn.disabled=false;btn.textContent=old||"⬆ 推送当前 Clash 到订阅"}
+  }
+}
+
+async function forceServerRebuild(){
+  if(!confirm("将由服务端根据 KV 中的 config + 界面设置重新生成 Clash 并写入订阅。是否继续？"))return;
+  const btn=$("forceSubRebuild");
+  const old=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.textContent="重建中…"}
+  setSubStatus("正在服务端重建订阅…","");
+  try{
+    const res=await fetch("/api/sub/rebuild",{
+      method:"POST",
+      credentials:"same-origin",
+      headers:{"Content-Type":"application/json"}
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok)throw new Error(data.message||`HTTP ${res.status}`);
+    if(data.url&&$("subUrlInput"))$("subUrlInput").value=data.url;
+    setSubStatus(
+      `✅ ${data.message||"重建完成"}<br>链接：<code>${data.url||""}</code><br>大小：${formatSubBytes(data.bytes)}`+
+      (data.meta?.updated_at?`<br>时间：${formatBeijing(data.meta.updated_at)}`:""),
+      "ok"
+    );
+    toast(data.message||"服务端已重建订阅","success","自动重建");
+    await refreshSubInfo(false);
+  }catch(e){
+    setSubStatus("❌ 服务端重建失败："+e.message,"error");
+    toast("重建失败："+e.message,"error","重建失败");
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=old||"🔄 服务端重建订阅"}
   }
 }
 
@@ -1712,12 +1977,10 @@ $("copySubUrl")?.addEventListener("click",()=>{
 $("refreshSubInfo")?.addEventListener("click",()=>refreshSubInfo(true));
 $("pushSubClash")?.addEventListener("click",()=>pushClashToSubscription());
 $("clearSubContent")?.addEventListener("click",()=>clearSubscription());
+$("forceSubRebuild")?.addEventListener("click",()=>forceServerRebuild());
 
 $("clearConfigKv")?.addEventListener("click",()=>clearConfigFromKv());
-$("saveConfigKv")?.addEventListener("click",()=>{
-  if(!source){toast("当前没有已加载的 config.json。","error","无法保存");return}
-  persistConfigToKv($("loadedFile")?.textContent?.replace(/^✓\s*/,"")||"manual-save");
-});
+$("clearMomKv")?.addEventListener("click",()=>clearInnerConfigFromKv());
 
 refreshSubInfo(false);
 
@@ -1730,8 +1993,11 @@ refreshSubInfo(false);
     setSettingsState("clean","当前为推荐设置（尚未保存过自定义选项）");
   }
   const ok=await restoreConfigFromKv();
+  await restoreInnerConfigFromKv();
   if(!ok){
     setStatus("等待开始：请注册 Usque，或导入已有 config.json（将自动保存到 KV）。","");
+  }else if(sourceInner){
+    setStatus("已从 KV 恢复外层 + 内层 MoM，可直接生成 Clash。","ok");
   }
 })();
 })();

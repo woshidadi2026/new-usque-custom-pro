@@ -396,3 +396,22 @@ transform:translateY(-2px);
 .config-kv-status.ok{border-color:#2f7557;color:#bdf0d4;background:rgba(35,112,69,.12)}
 .config-kv-status.error{border-color:#7a3948;color:#ffd0d7;background:rgba(124,48,65,.14)}
 .config-kv-actions{margin-top:10px}
+
+
+/* v6.23 Masque Over Masque */
+.mom-panel{
+  margin-top:14px;padding:14px;border:1px solid #3a5f8a;border-radius:12px;
+  background:linear-gradient(180deg,rgba(28,60,110,.22),rgba(8,26,42,.28))
+}
+.mom-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}
+.mom-head h3{margin:0 0 4px;font-size:16px}
+.mom-head p{margin:0;color:#9fb6c6;font-size:12.5px;line-height:1.6}
+.mom-flow{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0 10px}
+.mom-flow span{
+  padding:5px 8px;border:1px solid #355a7a;border-radius:999px;
+  background:rgba(30,70,120,.18);font-size:11px;color:#c3d8ea
+}
+.mom-note{
+  margin-top:10px;padding:10px 12px;border:1px solid #355a7a;border-radius:10px;
+  background:rgba(8,30,48,.45);color:#b9cedd;font-size:12.5px;line-height:1.65
+}
