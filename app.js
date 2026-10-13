@@ -445,6 +445,22 @@ function opts(){
   freeScope:$("freeScope").value,
   freeProtocolMode:$("freeProtocolMode").value,
   freeCountries:uniq([...baseFreeCountries,...($("customIpRoutingEnabled")?.checked?customParsed.countries:[])]),
+  // VPNGate 家宽（独立代理组，不与「免费落地」混用）
+  vgEnabled:!!$("vgEnabled")?.checked,
+  vgUseWarp:!!$("vgUseWarp")?.checked,
+  vgResidential:!!$("vgResidential")?.checked,
+  vgLimit:Math.max(1,Math.min(20,Number($("vgLimit")?.value)||15)),
+  vgCountries:uniq([
+    $("vgJP")?.checked?"JP":"",
+    $("vgKR")?.checked?"KR":"",
+    $("vgUS")?.checked?"US":"",
+    $("vgTW")?.checked?"TW":"",
+    $("vgHK")?.checked?"HK":"",
+    $("vgSG")?.checked?"SG":"",
+    $("vgDE")?.checked?"DE":"",
+    $("vgGB")?.checked?"GB":"",
+    $("vgOther")?.checked?"OTHER":""
+  ].filter(Boolean)),
   customIpEnabled:$("customIpRoutingEnabled")?.checked||false,
   customIpRules:customParsed.rules,
   customIpErrors:customParsed.errors,
@@ -693,6 +709,81 @@ function appendFreeProviders(a,o){
    appendOneFreeProvider(a,o,code,"stream");
  }
 }
+
+const VG_COUNTRY_META={
+ JP:{flag:"🇯🇵",name:"日本"},KR:{flag:"🇰🇷",name:"韩国"},US:{flag:"🇺🇸",name:"美国"},
+ TW:{flag:"🇹🇼",name:"台湾"},HK:{flag:"🇭🇰",name:"香港"},SG:{flag:"🇸🇬",name:"新加坡"},
+ DE:{flag:"🇩🇪",name:"德国"},GB:{flag:"🇬🇧",name:"英国"}
+};
+function vgProviderId(){return "VPNGATE-HOME"}
+function vgSubscriptionUrl(o){
+ const origin=typeof location!=="undefined"?location.origin:"";
+ const countries=o.vgCountries.filter(c=>c!=="OTHER");
+ const params=new URLSearchParams();
+ if(countries.length)params.set("countries",countries.join(","));
+ params.set("residential",o.vgResidential?"1":"0");
+ params.set("limit",String(o.vgLimit||15));
+ return `${origin}/api/vpngate?${params.toString()}`;
+}
+function appendVpngateProviders(a,o){
+ if(!o.vgEnabled)return;
+ if(!o.vgCountries.length)throw new Error("已启用 VPNGate 家宽，但没有选择任何国家/地区");
+ // 若前面没有 proxy-providers 段（未开免费落地），先写标题
+ if(!o.freeEnabled)a.push("","proxy-providers:");
+ const pid=vgProviderId();
+ a.push(
+  `  ${pid}:`,
+  "    type: http",
+  `    url: ${q(vgSubscriptionUrl(o))}`,
+  `    path: ${q("./providers/vpngate-home.yaml")}`,
+  "    interval: 1800",
+  "    size-limit: 16777216"
+ );
+ if(o.vgUseWarp)a.push('    proxy: "WARP中转"');
+ a.push(
+  "    health-check:",
+  "      enable: true",
+  '      url: "https://www.gstatic.com/generate_204"',
+  '      expected-status: "204"',
+  "      interval: 300",
+  "      timeout: 8000",
+  "      lazy: false",
+  "    override:",
+  '      additional-prefix: "🏠 VG | "'
+ );
+ if(o.vgUseWarp)a.push('      dialer-proxy: "WARP中转"');
+}
+function vgCountryGroupName(code){
+ const meta=VG_COUNTRY_META[code]||{flag:"🏠"};
+ return `${meta.flag} VG-${code}`;
+}
+function appendVgChoices(a,o,indent="      "){
+ if(!o.vgEnabled||!o.vgCountries||!o.vgCountries.length)return;
+ a.push(`${indent}- ${q("🏠 VPNGate")}`);
+}
+function appendVpngateGroups(a,o){
+ if(!o.vgEnabled||!o.vgCountries.length)return;
+ const pid=vgProviderId();
+
+ // 内部测速组（隐藏）：默认给「🏠 VPNGate」用
+ groupHeader(a,"🏠 VPNGate测速","url-test");
+ a.push(
+  "    hidden: true",
+  '    url: "https://www.gstatic.com/generate_204"',
+  '    expected-status: "204"',
+  "    interval: 180","    tolerance: 50","    timeout: 8000",
+  "    lazy: false","    max-failed-times: 2",
+  "    use:",`      - ${q(pid)}`
+ );
+
+ // 对外只暴露一个组：默认测速优选，也可手动选具体节点
+ groupHeader(a,"🏠 VPNGate");
+ a.push(
+  "    proxies:",
+  '      - "🏠 VPNGate测速"',
+  "    use:",`      - ${q(pid)}`
+ );
+}
 function appendProviderUse(a,o,kind="general",indent="      "){
  for(const code of o.freeCountries)a.push(`${indent}- ${q(freeProviderId(code,kind))}`);
 }
@@ -801,33 +892,45 @@ function clashGroupsAndRules(names,o){
    }
  }
 
+ // VPNGate 家宽：独立策略组（不混入免费落地）
+ appendVpngateGroups(a,o);
+
  // Reference-style common strategies
+ // 自动选择：含 MoM / VPNGate / WARP / 免费地区（按延迟优选）
  groupHeader(a,"♻️ 自动选择","url-test");
  a.push(
    "    url: https://www.gstatic.com/generate_204","    expected-status: 204",
    "    interval: 120","    tolerance: 20","    timeout: 5000","    lazy: false","    max-failed-times: 2","    proxies:"
  );
- if(freeOn)appendCountryChoices(a,o);
+ if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
+ appendVgChoices(a,o);
  a.push('      - "🚀 WARP自动"');
+ if(freeOn)appendCountryChoices(a,o);
 
+ // 故障转移：顺序固定 —— MoM → VPNGate → WARP自动 → 其余
  groupHeader(a,"🛡️ 故障转移","fallback");
  a.push(
    "    url: https://www.gstatic.com/generate_204","    expected-status: 204",
    "    interval: 60","    timeout: 5000","    lazy: false","    max-failed-times: 1","    proxies:"
  );
- if(freeOn)appendCountryChoices(a,o);
+ if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
+ appendVgChoices(a,o);
  a.push('      - "🚀 WARP自动"');
+ if(freeOn)appendCountryChoices(a,o);
 
+ // 负载均衡：成员含 MoM / VPNGate / WARP / 免费 provider
  groupHeader(a,"⚖️ 负载均衡","load-balance");
  a.push(
    "    strategy: consistent-hashing",
-   "    url: https://www.gstatic.com/generate_204","    interval: 180","    timeout: 5000","    lazy: false"
+   "    url: https://www.gstatic.com/generate_204","    interval: 180","    timeout: 5000","    lazy: false",
+   "    proxies:"
  );
+ if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
+ appendVgChoices(a,o);
+ a.push('      - "🚀 WARP自动"');
  if(freeOn){
    a.push("    use:");
    appendProviderUse(a,o,"general");
- }else{
-   a.push("    proxies:",'      - "🚀 WARP自动"');
  }
 
  groupHeader(a,"🚀 节点选择");
@@ -835,6 +938,7 @@ function clashGroupsAndRules(names,o){
  if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
  if(freeOn)appendCountryChoices(a,o);
  if(freeOn)a.push('      - "🌍 免费落地可手动"');
+ if(o.vgEnabled&&o.vgCountries.length)a.push('      - "🏠 VPNGate"');
  a.push('      - "🌎 WARP可手动"','      - "🚀 WARP自动"',"      - DIRECT");
 
  groupHeader(a,"🎯 全球直连");
@@ -843,12 +947,13 @@ function clashGroupsAndRules(names,o){
  groupHeader(a,"🛑 全球拦截");
  a.push("    proxies:","      - REJECT","      - REJECT-DROP");
 
- // AI：优先 Masque Over Masque
+ // AI：优先 Masque Over Masque；可选 VPNGate 家宽
  groupHeader(a,"🤖 AI");
  a.push("    proxies:");
  if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
  if(freeOn&&freeForService(o,"AI"))a.push('      - "🤖 AI自动优选"');
  if(freeOn)appendCountryChoices(a,o);
+ appendVgChoices(a,o);
  a.push('      - "🚀 节点选择"');
  if(freeOn)a.push('      - "🌍 免费落地可手动"');
  a.push('      - "🌎 WARP可手动"','      - "🎯 全球直连"');
@@ -859,6 +964,7 @@ function clashGroupsAndRules(names,o){
  if(freeOn)a.push('      - "🎬 流媒体自动优选"');
  if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
  if(freeOn)appendCountryChoices(a,o);
+ appendVgChoices(a,o);
  a.push('      - "🚀 节点选择"');
  if(freeOn)a.push('      - "🌍 免费落地可手动"');
  a.push('      - "🌎 WARP可手动"','      - "🎯 全球直连"');
@@ -886,6 +992,7 @@ function clashGroupsAndRules(names,o){
    a.push('      - "⚡ YouTube-免费极速"');
    appendCountryChoices(a,o);
  }
+ appendVgChoices(a,o);
  if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
  a.push('      - "🚀 节点选择"','      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
@@ -895,6 +1002,7 @@ function clashGroupsAndRules(names,o){
  if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
  a.push('      - "🚀 节点选择"');
  if(freeOn)appendCountryChoices(a,o);
+ appendVgChoices(a,o);
  a.push('      - "♻️ 自动选择"','      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
  // GitHub 独立策略组：默认 WARP，避免被 microsoft 规则集吞掉后走直连
@@ -903,6 +1011,7 @@ function clashGroupsAndRules(names,o){
  if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
  a.push('      - "🚀 WARP自动"','      - "🚀 节点选择"','      - "♻️ 自动选择"');
  if(freeOn)appendCountryChoices(a,o);
+ appendVgChoices(a,o);
  a.push('      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
  groupHeader(a,"Ⓜ️ 微软服务");
@@ -929,6 +1038,7 @@ function clashGroupsAndRules(names,o){
  if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
  a.push('      - "🚀 WARP自动"','      - "🚀 节点选择"','      - "♻️ 自动选择"');
  if(freeOn)appendCountryChoices(a,o);
+ appendVgChoices(a,o);
  a.push('      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
  groupHeader(a,"🐟 漏网之鱼");
@@ -936,6 +1046,7 @@ function clashGroupsAndRules(names,o){
  if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
  a.push('      - "🚀 WARP自动"','      - "🚀 节点选择"','      - "♻️ 自动选择"');
  if(freeOn)appendCountryChoices(a,o);
+ appendVgChoices(a,o);
  a.push('      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
  groupHeader(a,"PROXY");
@@ -1084,6 +1195,7 @@ function buildClash(){
  const momNames=appendMomNodes(a,o);
  if(momNames.length)o.momNames=momNames;
  appendFreeProviders(a,o);
+ appendVpngateProviders(a,o);
  a.push(...clashGroupsAndRules(names,o));
  return a.join("\n");
 }
@@ -1529,6 +1641,30 @@ function updateFreeEgressHint(){
    :`当前未启用：生成结果与原版一致。启用后 Clash 会自动拉取所选地区的公开免费节点。`;
 }
 
+function selectedVgLabels(){
+ return [
+  $("vgJP")?.checked?"JP":"",
+  $("vgKR")?.checked?"KR":"",
+  $("vgUS")?.checked?"US":"",
+  $("vgTW")?.checked?"TW":"",
+  $("vgHK")?.checked?"HK":"",
+  $("vgSG")?.checked?"SG":"",
+  $("vgDE")?.checked?"DE":"",
+  $("vgGB")?.checked?"GB":"",
+  $("vgOther")?.checked?"OTHER":""
+ ].filter(Boolean);
+}
+function updateVgHint(){
+ const box=$("vgHint"); if(!box)return;
+ const enabled=!!$("vgEnabled")?.checked;
+ const countries=selectedVgLabels();
+ const chain=$("vgUseWarp")?.checked?"经 WARP/MASQUE 中转（推荐）":"直连 VPNGate（可能被墙）";
+ const res=$("vgResidential")?.checked?"优先志愿者家宽":"含机房节点";
+ box.textContent=enabled
+   ?`已启用 VPNGate（并入主订阅）：地区 ${countries.join(" / ")||"未选择"}；每国最多 ${$("vgLimit")?.value||15} 个；${res}；${chain}。`
+   :`当前未启用。开启后会并入主订阅 /{SUB_UUID}，与 WARP/免费落地同在一份 YAML；/api/vpngate 只是内部节点源（需 Mihomo ≥ 1.19.25）。`;
+}
+
 function updateChatgptRouteHint(){
  const mode=$("chatgptRouteMode").value;
  const labels={
@@ -1550,6 +1686,8 @@ function updateChatgptRouteHint(){
 const SETTINGS_FIELD_IDS = [
   "freeEgressEnabled","freeUseWarp","freeScope","freeProtocolMode",
   "freeUS","freeJP","freeSG","freeHK","freeTW","freeKR",
+  "vgEnabled","vgUseWarp","vgResidential","vgLimit",
+  "vgJP","vgKR","vgUS","vgTW","vgHK","vgSG","vgDE","vgGB","vgOther",
   "customIpRoutingEnabled","customIpRoutingRules",
   "endpointPreset","customEndpoint","portPreset","customPort",
   "sniPreset","customSni","dnsPreset","customDns",
@@ -1607,6 +1745,7 @@ function applyUiSettings(map){
   syncConditional();
   updateEstimate();
   updateFreeEgressHint();
+  updateVgHint();
   updateCustomIpRoutingHint();
   try{updateChatgptRouteHint()}catch(_){}
   settingsDirty=false;
@@ -1661,8 +1800,10 @@ function resetRecommended(){
  $("udpForward").checked=true;$("remoteDns").checked=true;$("autoSelect").checked=true;$("showIcons").checked=true;$("adBlock").checked=true;$("includeTestEndpoints").checked=true;$("dedupeNodes").checked=true;$("h2ExtendedPool").checked=true;
  $("freeEgressEnabled").checked=true;$("freeUseWarp").checked=true;$("freeScope").value="ai-streaming";$("freeProtocolMode").value="stable";
  $("freeUS").checked=true;$("freeJP").checked=true;$("freeSG").checked=true;$("freeHK").checked=false;$("freeTW").checked=false;$("freeKR").checked=false;
+ $("vgEnabled").checked=true;$("vgUseWarp").checked=true;$("vgResidential").checked=true;$("vgLimit").value="15";
+ $("vgJP").checked=true;$("vgKR").checked=true;$("vgUS").checked=true;$("vgTW").checked=true;$("vgHK").checked=true;$("vgSG").checked=true;$("vgDE").checked=true;$("vgGB").checked=true;$("vgOther").checked=true;
  $("customIpRoutingEnabled").checked=false;$("customIpRoutingRules").value="";
- syncConditional();updateEstimate();updateFreeEgressHint();updateCustomIpRoutingHint();
+ syncConditional();updateEstimate();updateFreeEgressHint();updateVgHint();updateCustomIpRoutingHint();
 }
 function preset(name){
  resetRecommended();
@@ -1690,11 +1831,14 @@ function syncConditional(){
  if($("networkMode").value==="h3-l4proxy")$("udpForward").checked=false;
 }
 
-const selectSettingIds=["freeEgressEnabled","freeUseWarp","freeScope","freeProtocolMode","freeUS","freeJP","freeSG","freeHK","freeTW","freeKR","customIpRoutingEnabled","endpointPreset","portPreset","sniPreset","dnsPreset","innerIpMode","networkMode","stackMode","ccMode","outerCc","bbrProfile","mtuPreset","handshakeTimeout","ruleMode","healthUrl","healthInterval","healthTolerance","aiHealthMode","chatgptRouteMode","otherAiRouteMode","chatgptDirectFallback","egressCountry1","egressCountry2","egressCountry3","egressChatgptFirst","egressApplyAll","enableControllerApi","nodeCountMode","nodeBuildMode","nodeNaming","udpForward","remoteDns","autoSelect","showIcons","adBlock","includeTestEndpoints","dedupeNodes","h2ExtendedPool"];
-selectSettingIds.forEach(id=>$(id).addEventListener("change",()=>{
+const selectSettingIds=["freeEgressEnabled","freeUseWarp","freeScope","freeProtocolMode","freeUS","freeJP","freeSG","freeHK","freeTW","freeKR","vgEnabled","vgUseWarp","vgResidential","vgLimit","vgJP","vgKR","vgUS","vgTW","vgHK","vgSG","vgDE","vgGB","vgOther","customIpRoutingEnabled","endpointPreset","portPreset","sniPreset","dnsPreset","innerIpMode","networkMode","stackMode","ccMode","outerCc","bbrProfile","mtuPreset","handshakeTimeout","ruleMode","healthUrl","healthInterval","healthTolerance","aiHealthMode","chatgptRouteMode","otherAiRouteMode","chatgptDirectFallback","egressCountry1","egressCountry2","egressCountry3","egressChatgptFirst","egressApplyAll","enableControllerApi","nodeCountMode","nodeBuildMode","nodeNaming","udpForward","remoteDns","autoSelect","showIcons","adBlock","includeTestEndpoints","dedupeNodes","h2ExtendedPool"];
+selectSettingIds.forEach(id=>{
+ const el=$(id); if(!el)return;
+ el.addEventListener("change",()=>{
  syncConditional();updateEstimate();
  if(id==="chatgptRouteMode"||id==="otherAiRouteMode")updateChatgptRouteHint();
  if(["freeEgressEnabled","freeUseWarp","freeScope","freeProtocolMode","freeUS","freeJP","freeSG","freeHK","freeTW","freeKR"].includes(id))updateFreeEgressHint();
+ if(["vgEnabled","vgUseWarp","vgResidential","vgLimit","vgJP","vgKR","vgUS","vgTW","vgHK","vgSG","vgDE","vgGB","vgOther"].includes(id))updateVgHint();
  if(id==="customIpRoutingEnabled")updateCustomIpRoutingHint();
  markDirty(id,true);
  if(id==="nodeCountMode"){
@@ -1705,7 +1849,8 @@ selectSettingIds.forEach(id=>$(id).addEventListener("change",()=>{
      toast(`节点数量模式已切换：应用后生成 ${actual} 个节点。`,"info","节点模式");
    }
  }
-}));
+ });
+});
 const textSettingIds=["customIpRoutingRules","customEndpoint","customPort","customSni","customDns","customInner4","customInner6","customMtu","customNodeCount","extraEndpoints","controllerUrl","controllerSecret","localProxyUrl","nodeTag","profileName"];
 textSettingIds.forEach(id=>$(id).addEventListener("change",()=>{
  if(id==="customIpRoutingRules")updateCustomIpRoutingHint();
@@ -1987,7 +2132,7 @@ refreshSubInfo(false);
 // 启动：默认推荐值 → 恢复界面设置 → 恢复注册 config
 (async()=>{
   resetRecommended();
-  syncConditional();updateEstimate();updateFreeEgressHint();updateCustomIpRoutingHint();
+  syncConditional();updateEstimate();updateFreeEgressHint();updateVgHint();updateCustomIpRoutingHint();
   const restoredSettings=await restoreSettingsFromKv();
   if(!restoredSettings){
     setSettingsState("clean","当前为推荐设置（尚未保存过自定义选项）");

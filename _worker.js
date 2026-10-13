@@ -315,7 +315,7 @@ async function loadUiSettings(env) {
  * 服务端自动重建订阅 YAML（方案 A）
  * 类似第一份 ensureConfig：有新鲜缓存直接用；过期则用 KV 中的 config + settings 重建。
  */
-async function ensureSubscriptionYaml(env, { force = false } = {}) {
+async function ensureSubscriptionYaml(env, { force = false, siteOrigin = "" } = {}) {
   if (!env.USQUE_KV) {
     return { content: null, source: "none", rebuilt: false, error: "未绑定 KV" };
   }
@@ -366,7 +366,12 @@ async function ensureSubscriptionYaml(env, { force = false } = {}) {
   try {
     const inner = await loadInnerConfig(env);
     const settings = await loadUiSettings(env);
-    const built = buildClashServer(outer, inner, settings);
+    // 把站点 origin 塞进 settings，供 VPNGate provider 写绝对 URL
+    const settingsWithOrigin = {
+      ...(settings || {}),
+      _siteOrigin: { t: "v", v: String(siteOrigin || "") }
+    };
+    const built = buildClashServer(outer, inner, settingsWithOrigin);
     if (!built.yaml || built.yaml.length > SUB_MAX_BYTES_BUILD) {
       throw new Error("生成的 YAML 无效或过大");
     }
@@ -374,11 +379,13 @@ async function ensureSubscriptionYaml(env, { force = false } = {}) {
       updated_at: new Date().toISOString(),
       bytes: built.yaml.length,
       note: `auto-rebuild · ${built.nodes}nodes` + (built.mom ? ` + ${built.mom}MoM` : "") +
-        (built.freeCountries?.length ? ` · free:${built.freeCountries.join("+")}` : " · warp-only"),
+        (built.freeCountries?.length ? ` · free:${built.freeCountries.join("+")}` : " · warp-only") +
+        (built.vgEnabled ? ` · vg:${(built.vgCountries || []).join("+") || "on"}` : ""),
       profile: "MASQUE-Pro",
       auto: true,
       nodes: built.nodes,
       mom: built.mom || 0,
+      vg: built.vgEnabled ? 1 : 0,
       expires_at: new Date(Date.now() + SUB_TTL_MS).toISOString()
     };
     await env.USQUE_KV.put(KV_SUB_YAML, built.yaml);
@@ -436,9 +443,11 @@ async function handleSubscription(request, env) {
   }
 
   // 方案 A：订阅被拉取时自动 ensure（过期则用 KV config+settings 重建）
+  // siteOrigin 用于主订阅内嵌的 VPNGate provider 写绝对 URL
+  const siteOrigin = new URL(request.url).origin;
   let result;
   try {
-    result = await ensureSubscriptionYaml(env, { force: false });
+    result = await ensureSubscriptionYaml(env, { force: false, siteOrigin });
   } catch (e) {
     result = { content: null, source: "none", error: String(e?.message || e) };
   }
@@ -1183,6 +1192,20 @@ const DEFAULT_UI_SETTINGS = {
   freeHK: { t: "c", v: false },
   freeTW: { t: "c", v: false },
   freeKR: { t: "c", v: false },
+  // VPNGate 家宽（写入同一份主订阅 YAML，不是第二个订阅）
+  vgEnabled: { t: "c", v: true },
+  vgUseWarp: { t: "c", v: true },
+  vgResidential: { t: "c", v: true },
+  vgLimit: { t: "v", v: "15" },
+  vgJP: { t: "c", v: true },
+  vgKR: { t: "c", v: true },
+  vgUS: { t: "c", v: true },
+  vgTW: { t: "c", v: true },
+  vgHK: { t: "c", v: true },
+  vgSG: { t: "c", v: true },
+  vgDE: { t: "c", v: true },
+  vgGB: { t: "c", v: true },
+  vgOther: { t: "c", v: true },
   customIpRoutingEnabled: { t: "c", v: false },
   customIpRoutingRules: { t: "v", v: "" },
   endpointPreset: { t: "v", v: "auto-curated" },
@@ -1281,6 +1304,8 @@ function optsFromUi(ui, source) {
     sv(ui, "freeTW", false) ? "TW" : "",
     sv(ui, "freeKR", false) ? "KR" : ""
   ]);
+  // 可选：由 ensureSubscriptionYaml 注入 _siteOrigin
+  const injectedOrigin = String(sv(ui, "_siteOrigin", "") || "").trim();
   const sniPreset = String(sv(ui, "sniPreset", "speed.cloudflare.com"));
   const sni =
     sniPreset === "custom"
@@ -1326,6 +1351,23 @@ function optsFromUi(ui, source) {
     freeScope: String(sv(ui, "freeScope", "ai-streaming")),
     freeProtocolMode: String(sv(ui, "freeProtocolMode", "stable")),
     freeCountries,
+    vgEnabled: !!sv(ui, "vgEnabled", true),
+    vgUseWarp: !!sv(ui, "vgUseWarp", true),
+    vgResidential: !!sv(ui, "vgResidential", true),
+    vgLimit: Math.max(1, Math.min(20, Number(sv(ui, "vgLimit", 15)) || 15)),
+    vgCountries: uniqS([
+      sv(ui, "vgJP", true) ? "JP" : "",
+      sv(ui, "vgKR", true) ? "KR" : "",
+      sv(ui, "vgUS", true) ? "US" : "",
+      sv(ui, "vgTW", true) ? "TW" : "",
+      sv(ui, "vgHK", true) ? "HK" : "",
+      sv(ui, "vgSG", true) ? "SG" : "",
+      sv(ui, "vgDE", true) ? "DE" : "",
+      sv(ui, "vgGB", true) ? "GB" : "",
+      sv(ui, "vgOther", true) ? "OTHER" : ""
+    ]),
+    // 主站 origin，用于把 /api/vpngate 写成绝对 URL 写进同一份订阅
+    siteOrigin: injectedOrigin,
     profile: String(sv(ui, "profileName", "MASQUE-Pro") || "MASQUE-Pro").trim(),
     nodeTag: String(sv(ui, "nodeTag", "CDN") || "CDN").trim(),
     nodeNaming: String(sv(ui, "nodeNaming", "detail")),
@@ -1711,6 +1753,92 @@ function appendFreeProvidersS(a, o) {
     appendOneFreeProviderS(a, o, code, "stream");
   }
 }
+
+const VG_COUNTRY_META_S = {
+  JP: { flag: "🇯🇵", name: "日本" },
+  KR: { flag: "🇰🇷", name: "韩国" },
+  US: { flag: "🇺🇸", name: "美国" },
+  TW: { flag: "🇹🇼", name: "台湾" },
+  HK: { flag: "🇭🇰", name: "香港" },
+  SG: { flag: "🇸🇬", name: "新加坡" },
+  DE: { flag: "🇩🇪", name: "德国" },
+  GB: { flag: "🇬🇧", name: "英国" }
+};
+function vgProviderIdS() {
+  return "VPNGATE-HOME";
+}
+function vgSubscriptionUrlS(o) {
+  const origin = String(o.siteOrigin || "").replace(/\/$/, "");
+  const countries = (o.vgCountries || []).filter((c) => c !== "OTHER");
+  const params = new URLSearchParams();
+  if (countries.length) params.set("countries", countries.join(","));
+  params.set("residential", o.vgResidential ? "1" : "0");
+  params.set("limit", String(o.vgLimit || 15));
+  // origin 为空时退回相对路径（客户端生成时一般会有 location.origin）
+  const base = origin ? `${origin}/api/vpngate` : "/api/vpngate";
+  return `${base}?${params.toString()}`;
+}
+function appendVpngateProvidersS(a, o) {
+  if (!o.vgEnabled) return;
+  if (!o.vgCountries || !o.vgCountries.length) {
+    throw new Error("已启用 VPNGate 家宽，但没有选择任何国家/地区");
+  }
+  if (!o.freeEnabled) a.push("", "proxy-providers:");
+  const pid = vgProviderIdS();
+  a.push(
+    `  ${pid}:`,
+    "    type: http",
+    `    url: ${qS(vgSubscriptionUrlS(o))}`,
+    `    path: ${qS("./providers/vpngate-home.yaml")}`,
+    "    interval: 1800",
+    "    size-limit: 16777216"
+  );
+  if (o.vgUseWarp) a.push('    proxy: "WARP中转"');
+  a.push(
+    "    health-check:",
+    "      enable: true",
+    '      url: "https://www.gstatic.com/generate_204"',
+    '      expected-status: "204"',
+    "      interval: 300",
+    "      timeout: 8000",
+    "      lazy: false",
+    "    override:",
+    '      additional-prefix: "🏠 VG | "'
+  );
+  if (o.vgUseWarp) a.push('      dialer-proxy: "WARP中转"');
+}
+function vgCountryGroupNameS(code) {
+  const meta = VG_COUNTRY_META_S[code] || { flag: "🏠" };
+  return `${meta.flag} VG-${code}`;
+}
+function appendVgChoicesS(a, o, indent) {
+  indent = indent || "      ";
+  if (!o.vgEnabled || !o.vgCountries || !o.vgCountries.length) return;
+  a.push(`${indent}- ${qS("🏠 VPNGate")}`);
+}
+function appendVpngateGroupsS(a, o) {
+  if (!o.vgEnabled || !o.vgCountries || !o.vgCountries.length) return;
+  const pid = vgProviderIdS();
+
+  // 内部测速组（隐藏）
+  groupHeaderS(a, "🏠 VPNGate测速", "url-test", o);
+  a.push(
+    "    hidden: true",
+    '    url: "https://www.gstatic.com/generate_204"',
+    '    expected-status: "204"',
+    "    interval: 180",
+    "    tolerance: 50",
+    "    timeout: 8000",
+    "    lazy: false",
+    "    max-failed-times: 2",
+    "    use:",
+    `      - ${qS(pid)}`
+  );
+
+  // 对外只暴露一个组：默认测速，可手动切换具体节点
+  groupHeaderS(a, "🏠 VPNGate", "select", o);
+  a.push("    proxies:", '      - "🏠 VPNGate测速"', "    use:", `      - ${qS(pid)}`);
+}
 function appendProviderUseS(a, o, kind, indent) {
   indent = indent || "      ";
   for (const code of o.freeCountries) a.push(`${indent}- ${qS(freeProviderIdS(code, kind))}`);
@@ -1841,6 +1969,10 @@ function clashGroupsAndRulesS(names, o) {
     }
   }
 
+  // VPNGate 须先于自动选择/故障转移/负载均衡定义，以便被引用
+  appendVpngateGroupsS(a, o);
+
+  // 自动选择：含 MoM / VPNGate / WARP / 免费地区
   groupHeaderS(a, "♻️ 自动选择", "url-test", o);
   a.push(
     "    url: https://www.gstatic.com/generate_204",
@@ -1852,9 +1984,12 @@ function clashGroupsAndRulesS(names, o) {
     "    max-failed-times: 2",
     "    proxies:"
   );
-  if (freeOn) appendCountryChoicesS(a, o);
+  if (o.momNames && o.momNames.length) a.push('      - "🔄 MasqueOverMasque"');
+  appendVgChoicesS(a, o);
   a.push('      - "🚀 WARP自动"');
+  if (freeOn) appendCountryChoicesS(a, o);
 
+  // 故障转移：MoM → VPNGate → WARP自动 → 其余
   groupHeaderS(a, "🛡️ 故障转移", "fallback", o);
   a.push(
     "    url: https://www.gstatic.com/generate_204",
@@ -1865,22 +2000,27 @@ function clashGroupsAndRulesS(names, o) {
     "    max-failed-times: 1",
     "    proxies:"
   );
-  if (freeOn) appendCountryChoicesS(a, o);
+  if (o.momNames && o.momNames.length) a.push('      - "🔄 MasqueOverMasque"');
+  appendVgChoicesS(a, o);
   a.push('      - "🚀 WARP自动"');
+  if (freeOn) appendCountryChoicesS(a, o);
 
+  // 负载均衡：成员含 MoM / VPNGate / WARP / 免费 provider
   groupHeaderS(a, "⚖️ 负载均衡", "load-balance", o);
   a.push(
     "    strategy: consistent-hashing",
     "    url: https://www.gstatic.com/generate_204",
     "    interval: 180",
     "    timeout: 5000",
-    "    lazy: false"
+    "    lazy: false",
+    "    proxies:"
   );
+  if (o.momNames && o.momNames.length) a.push('      - "🔄 MasqueOverMasque"');
+  appendVgChoicesS(a, o);
+  a.push('      - "🚀 WARP自动"');
   if (freeOn) {
     a.push("    use:");
     appendProviderUseS(a, o, "general");
-  } else {
-    a.push("    proxies:", '      - "🚀 WARP自动"');
   }
 
   groupHeaderS(a, "🚀 节点选择", "select", o);
@@ -1893,6 +2033,7 @@ function clashGroupsAndRulesS(names, o) {
   if (o.momNames && o.momNames.length) a.push('      - "🔄 MasqueOverMasque"');
   if (freeOn) appendCountryChoicesS(a, o);
   if (freeOn) a.push('      - "🌍 免费落地可手动"');
+  if (o.vgEnabled && o.vgCountries && o.vgCountries.length) a.push('      - "🏠 VPNGate"');
   a.push('      - "🌎 WARP可手动"', '      - "🚀 WARP自动"', "      - DIRECT");
 
   groupHeaderS(a, "🎯 全球直连", "select", o);
@@ -1906,6 +2047,7 @@ function clashGroupsAndRulesS(names, o) {
   if (o.momNames && o.momNames.length) a.push('      - "🔄 MasqueOverMasque"');
   if (freeOn && freeForServiceS(o, "AI")) a.push('      - "🤖 AI自动优选"');
   if (freeOn) appendCountryChoicesS(a, o);
+  appendVgChoicesS(a, o);
   a.push('      - "🚀 节点选择"');
   if (freeOn) a.push('      - "🌍 免费落地可手动"');
   a.push('      - "🌎 WARP可手动"', '      - "🎯 全球直连"');
@@ -1915,6 +2057,7 @@ function clashGroupsAndRulesS(names, o) {
   if (freeOn) a.push('      - "🎬 流媒体自动优选"');
   if (o.momNames && o.momNames.length) a.push('      - "🔄 MasqueOverMasque"');
   if (freeOn) appendCountryChoicesS(a, o);
+  appendVgChoicesS(a, o);
   a.push('      - "🚀 节点选择"');
   if (freeOn) a.push('      - "🌍 免费落地可手动"');
   a.push('      - "🌎 WARP可手动"', '      - "🎯 全球直连"');
@@ -1955,6 +2098,7 @@ function clashGroupsAndRulesS(names, o) {
     a.push('      - "⚡ YouTube-免费极速"');
     appendCountryChoicesS(a, o);
   }
+  appendVgChoicesS(a, o);
   if (o.momNames && o.momNames.length) a.push('      - "🔄 MasqueOverMasque"');
   a.push('      - "🚀 节点选择"', '      - "🌎 WARP可手动"', '      - "🎯 全球直连"');
 
@@ -1963,6 +2107,7 @@ function clashGroupsAndRulesS(names, o) {
   if (o.momNames && o.momNames.length) a.push('      - "🔄 MasqueOverMasque"');
   a.push('      - "🚀 节点选择"');
   if (freeOn) appendCountryChoicesS(a, o);
+  appendVgChoicesS(a, o);
   a.push('      - "♻️ 自动选择"', '      - "🌎 WARP可手动"', '      - "🎯 全球直连"');
 
   groupHeaderS(a, "🐙 GitHub", "select", o);
@@ -1970,6 +2115,7 @@ function clashGroupsAndRulesS(names, o) {
   if (o.momNames && o.momNames.length) a.push('      - "🔄 MasqueOverMasque"');
   a.push('      - "🚀 WARP自动"', '      - "🚀 节点选择"', '      - "♻️ 自动选择"');
   if (freeOn) appendCountryChoicesS(a, o);
+  appendVgChoicesS(a, o);
   a.push('      - "🌎 WARP可手动"', '      - "🎯 全球直连"');
 
   groupHeaderS(a, "Ⓜ️ 微软服务", "select", o);
@@ -2002,6 +2148,7 @@ function clashGroupsAndRulesS(names, o) {
   if (o.momNames && o.momNames.length) a.push('      - "🔄 MasqueOverMasque"');
   a.push('      - "🚀 WARP自动"', '      - "🚀 节点选择"', '      - "♻️ 自动选择"');
   if (freeOn) appendCountryChoicesS(a, o);
+  appendVgChoicesS(a, o);
   a.push('      - "🌎 WARP可手动"', '      - "🎯 全球直连"');
 
   groupHeaderS(a, "🐟 漏网之鱼", "select", o);
@@ -2009,6 +2156,7 @@ function clashGroupsAndRulesS(names, o) {
   if (o.momNames && o.momNames.length) a.push('      - "🔄 MasqueOverMasque"');
   a.push('      - "🚀 WARP自动"', '      - "🚀 节点选择"', '      - "♻️ 自动选择"');
   if (freeOn) appendCountryChoicesS(a, o);
+  appendVgChoicesS(a, o);
   a.push('      - "🌎 WARP可手动"', '      - "🎯 全球直连"');
 
   groupHeaderS(a, "PROXY", "select", o);
@@ -2226,15 +2374,268 @@ function buildClashServer(source, sourceInner, uiRaw) {
   const momNames = appendMomNodesS(a, o, sourceInner);
   if (momNames.length) o.momNames = momNames;
   appendFreeProvidersS(a, o);
+  appendVpngateProvidersS(a, o);
   a.push(...clashGroupsAndRulesS(names, o));
   return {
     yaml: a.join("\n"),
     nodes: names.length,
     mom: momNames.length,
-    freeCountries: o.freeCountries
+    freeCountries: o.freeCountries,
+    vgEnabled: !!o.vgEnabled,
+    vgCountries: o.vgCountries || []
   };
 }
 
+
+/* ---------------- VPNGate 家宽订阅（无需登录，供 Mihomo proxy-providers 拉取） ---------------- */
+
+const VPNGATE_API_URLS = [
+  "https://www.vpngate.net/api/iphone/",
+  "https://cdn.jsdelivr.net/gh/GeorgeXie2333/vpngate-list-mirror@latest/data/vpngate.csv"
+];
+
+const VPNGATE_COUNTRY_META = {
+  JP: "日本", KR: "韩国", US: "美国", TW: "台湾", HK: "香港",
+  SG: "新加坡", DE: "德国", GB: "英国", FR: "法国", CA: "加拿大",
+  AU: "澳大利亚", RU: "俄罗斯", IN: "印度", TH: "泰国", VN: "越南",
+  ID: "印尼", MY: "马来西亚", PH: "菲律宾", IT: "意大利", ES: "西班牙",
+  NL: "荷兰", PL: "波兰", BR: "巴西", AR: "阿根廷", UA: "乌克兰"
+};
+
+// VPNGate 自营/机房特征（过滤后更接近志愿者家宽）
+const VPNGATE_DC_HOST_RE = /^(public-vpn-|vpn\d+\.opengw\.net)/i;
+const VPNGATE_DC_IP_PREFIXES = ["219.100.37."];
+
+function yamlQuote(s) {
+  return JSON.stringify(String(s ?? ""));
+}
+
+function parseOvpnFields(configText) {
+  const text = String(configText || "");
+  let host = "", port = 1194, proto = "udp";
+  const remoteM = text.match(/^\s*remote\s+(\S+)\s+(\d+)/mi);
+  if (remoteM) {
+    host = remoteM[1];
+    port = Number(remoteM[2]) || 1194;
+  }
+  const protoM = text.match(/^\s*proto\s+(\w+)/mi);
+  if (protoM) proto = String(protoM[1] || "udp").toLowerCase();
+  let ca = "";
+  const caM = text.match(/<ca>\s*([\s\S]*?)\s*<\/ca>/i);
+  if (caM) ca = caM[1].trim();
+  return { host, port, proto, ca };
+}
+
+function isLikelyDatacenter(hostname, ip) {
+  const h = String(hostname || "");
+  const ipStr = String(ip || "");
+  if (VPNGATE_DC_HOST_RE.test(h)) return true;
+  if (VPNGATE_DC_IP_PREFIXES.some(p => ipStr.startsWith(p))) return true;
+  return false;
+}
+
+function parseVpngateCsv(body) {
+  const lines = String(body || "").split(/\r?\n/);
+  const kept = [];
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (!line || line.startsWith("*")) continue;
+    kept.push(line.startsWith("#") ? line.slice(1) : line);
+  }
+  if (kept.length < 2) return [];
+
+  // 手工解析 CSV（OpenVPN Base64 字段可能含逗号，但官方导出一般不带引号内逗号；用字段数兜底）
+  const header = kept[0].split(",").map(x => x.trim());
+  const idx = {};
+  header.forEach((name, i) => { idx[name] = i; });
+  const need = ["HostName", "IP", "CountryLong", "CountryShort", "OpenVPN_ConfigData_Base64"];
+  for (const k of need) {
+    if (idx[k] == null) return [];
+  }
+
+  const nodes = [];
+  for (let i = 1; i < kept.length; i++) {
+    const cols = kept[i].split(",");
+    if (cols.length < header.length) {
+      // Base64 可能被错误切分时，把尾部拼回最后一列
+      if (cols.length > idx.OpenVPN_ConfigData_Base64) {
+        const head = cols.slice(0, idx.OpenVPN_ConfigData_Base64);
+        const tail = cols.slice(idx.OpenVPN_ConfigData_Base64).join(",");
+        cols.length = 0;
+        cols.push(...head, tail);
+      } else continue;
+    }
+    const get = (name) => String(cols[idx[name]] || "").trim();
+    const hostname = get("HostName");
+    const ip = get("IP");
+    const countryCode = get("CountryShort").toUpperCase();
+    const countryLong = get("CountryLong");
+    const b64 = get("OpenVPN_ConfigData_Base64");
+    if (!ip || !countryCode || !b64) continue;
+
+    let configText = "";
+    try {
+      // atob 在 Worker 可用；失败则跳过
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
+      configText = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    } catch {
+      continue;
+    }
+    const ovpn = parseOvpnFields(configText);
+    const server = ovpn.host || ip;
+    if (!server || !ovpn.ca) continue;
+
+    const ping = Number(get("Ping")) || 0;
+    const speed = Number(get("Speed")) || 0;
+    const sessions = Number(get("NumVpnSessions")) || 0;
+
+    nodes.push({
+      hostname,
+      ip,
+      countryCode,
+      countryLong,
+      ping,
+      speed,
+      sessions,
+      server,
+      port: ovpn.port,
+      proto: ovpn.proto === "tcp" ? "tcp" : "udp",
+      ca: ovpn.ca,
+      isDc: isLikelyDatacenter(hostname, ip)
+    });
+  }
+  return nodes;
+}
+
+async function fetchVpngateRaw() {
+  let lastErr = null;
+  for (const url of VPNGATE_API_URLS) {
+    try {
+      const resp = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; UsqueVPNGate/1.0)",
+          "Accept": "text/plain,*/*"
+        }
+      });
+      if (!resp.ok) {
+        lastErr = new Error(`HTTP ${resp.status} from ${url}`);
+        continue;
+      }
+      const text = await resp.text();
+      if (!text.includes("HostName") || !text.includes("OpenVPN_ConfigData_Base64")) {
+        lastErr = new Error(`invalid CSV from ${url}`);
+        continue;
+      }
+      return text;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("VPNGate 列表拉取失败");
+}
+
+function buildVpngateClashYaml(nodes, { countries, residentialOnly, limit }) {
+  const filtered = nodes.filter(n => {
+    if (countries.size && !countries.has(n.countryCode)) return false;
+    if (residentialOnly && n.isDc) return false;
+    return true;
+  });
+
+  // 按速度降序，再按国家限制数量
+  filtered.sort((a, b) => (b.speed - a.speed) || (a.ping - b.ping));
+
+  const perCountryCount = new Map();
+  const selected = [];
+  for (const n of filtered) {
+    const c = perCountryCount.get(n.countryCode) || 0;
+    if (c >= limit) continue;
+    perCountryCount.set(n.countryCode, c + 1);
+    selected.push(n);
+  }
+
+  const lines = [
+    "# VPNGate OpenVPN subscription (auto-generated by Usque)",
+    `# generated_at: ${new Date().toISOString()}`,
+    `# nodes: ${selected.length}`,
+    "proxies:"
+  ];
+
+  const usedNames = new Set();
+  for (const n of selected) {
+    const meta = VPNGATE_COUNTRY_META[n.countryCode] || n.countryLong || n.countryCode;
+    let name = `VG-${n.countryCode}-${n.ip}`;
+    let i = 2;
+    while (usedNames.has(name)) {
+      name = `VG-${n.countryCode}-${n.ip}-${i++}`;
+    }
+    usedNames.add(name);
+
+    lines.push(
+      `  - name: ${yamlQuote(name)}`,
+      `    type: openvpn`,
+      `    server: ${yamlQuote(n.server)}`,
+      `    port: ${n.port}`,
+      `    proto: ${n.proto}`,
+      `    username: "vpn"`,
+      `    password: "vpn"`,
+      `    udp: ${n.proto === "udp" ? "true" : "false"}`,
+      `    ca: |`
+    );
+    for (const caLine of n.ca.split(/\r?\n/)) {
+      lines.push(`      ${caLine}`);
+    }
+  }
+
+  if (!selected.length) {
+    lines.push("  # (no nodes matched filters)");
+  }
+
+  lines.push("");
+  return lines.join("\n");
+}
+
+async function handleVpngateSubscription(request) {
+  const url = new URL(request.url);
+  const countriesRaw = String(url.searchParams.get("countries") || "").trim();
+  const residentialOnly = !["0", "false", "no"].includes(String(url.searchParams.get("residential") || "1").toLowerCase());
+  const limit = Math.max(1, Math.min(30, Number(url.searchParams.get("limit") || 8) || 8));
+
+  const countries = new Set(
+    countriesRaw
+      ? countriesRaw.split(/[,|+\s]+/).map(x => x.trim().toUpperCase()).filter(Boolean)
+      : []
+  );
+
+  try {
+    const raw = await fetchVpngateRaw();
+    const nodes = parseVpngateCsv(raw);
+    const yaml = buildVpngateClashYaml(nodes, { countries, residentialOnly, limit });
+    return new Response(yaml, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/yaml; charset=utf-8",
+        "Cache-Control": "public, max-age=300",
+        "Access-Control-Allow-Origin": "*",
+        "X-VPNGate-Nodes": String(nodes.length),
+        "X-Content-Type-Options": "nosniff"
+      }
+    });
+  } catch (e) {
+    return new Response(
+      `# VPNGate fetch failed\nproxies: []\n# error: ${String(e?.message || e)}\n`,
+      {
+        status: 502,
+        headers: {
+          "Content-Type": "text/yaml; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Access-Control-Allow-Origin": "*"
+        }
+      }
+    );
+  }
+}
 
 /* ---------------- 主入口 ---------------- */
 
@@ -2245,9 +2646,24 @@ export default {
 
     const subUuid = String(env.SUB_UUID || "");
 
-    // 1) 订阅端点：/{SUB_UUID} 不校验登录
+    // 1) 主订阅端点：/{SUB_UUID} 不校验登录（一份 YAML = WARP + 可选免费落地 + 可选 VPNGate）
     if (subUuid && path === `/${subUuid}`) {
       return handleSubscription(request, env);
+    }
+
+    // 1b) VPNGate 节点源（不是独立订阅；仅供主订阅里的 proxy-providers 拉取 OpenVPN 列表）
+    if (path === "/api/vpngate" || path === "/api/vpngate.yaml") {
+      if (request.method === "OPTIONS") {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*"
+          }
+        });
+      }
+      return handleVpngateSubscription(request);
     }
 
     // 2) 登录 / 登出端点
@@ -2314,14 +2730,14 @@ export default {
         return json({ message: "Method Not Allowed" }, 405, { "Allow": "POST" });
       }
       try {
-        const result = await ensureSubscriptionYaml(env, { force: true });
+        const origin = new URL(request.url).origin;
+        const result = await ensureSubscriptionYaml(env, { force: true, siteOrigin: origin });
         if (!result.content) {
           return json({
             ok: false,
             message: result.error || "重建失败：无可用内容"
           }, 500);
         }
-        const origin = new URL(request.url).origin;
         const uuid = String(env.SUB_UUID || "");
         return json({
           ok: true,

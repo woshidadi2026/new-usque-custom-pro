@@ -260,6 +260,75 @@
       </details>
     </div>
 
+    <div class="free-egress-panel" id="vpngatePanel">
+      <div class="free-egress-head">
+        <div>
+          <h3>🏠 VPNGate 家宽（并入主订阅）</h3>
+          <p>开启后会写入<strong>同一份</strong> Clash / 主订阅 <code>/{SUB_UUID}</code>，在原有 WARP / 免费落地 之外增加 <code>🏠 VPNGate</code> 策略组。不是第二个订阅链接。</p>
+        </div>
+        <span class="simple-badge">家宽 IP</span>
+      </div>
+
+      <div class="free-warning">
+        ⚠️ <b>说明：</b>节点为志愿者共享，掉线常见、速度偏慢，适合解锁/注册测试。需要 <b>Mihomo ≥ 1.19.25</b>（支持 <code>type: openvpn</code>）。推荐开启「经 WARP 中转」。
+      </div>
+
+      <div class="free-egress-grid">
+        <label class="switch-pro free-master">
+          <input id="vgEnabled" type="checkbox" checked>
+          <span>启用 VPNGate 家宽组</span>
+        </label>
+        <label class="switch-pro">
+          <input id="vgUseWarp" type="checkbox" checked>
+          <span>订阅下载 + OpenVPN 连接都经 WARP / MASQUE 中转（推荐）</span>
+        </label>
+        <label class="switch-pro">
+          <input id="vgResidential" type="checkbox" checked>
+          <span>尽量过滤机房节点（只留志愿者家宽）</span>
+        </label>
+        <label>
+          <span>每个国家最多节点数</span>
+          <select id="vgLimit">
+            <option value="3">3</option>
+            <option value="6">6</option>
+            <option value="10">10</option>
+            <option value="15" selected>15</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="country-select">
+        <b>选择 VPNGate 国家：</b>
+        <label><input id="vgJP" type="checkbox" checked> 🇯🇵 日本 JP</label>
+        <label><input id="vgKR" type="checkbox" checked> 🇰🇷 韩国 KR</label>
+        <label><input id="vgUS" type="checkbox" checked> 🇺🇸 美国 US</label>
+        <label><input id="vgTW" type="checkbox" checked> 🇹🇼 台湾 TW</label>
+        <label><input id="vgHK" type="checkbox" checked> 🇭🇰 香港 HK</label>
+        <label><input id="vgSG" type="checkbox" checked> 🇸🇬 新加坡 SG</label>
+        <label><input id="vgDE" type="checkbox" checked> 🇩🇪 德国 DE</label>
+        <label><input id="vgGB" type="checkbox" checked> 🇬🇧 英国 GB</label>
+        <label><input id="vgOther" type="checkbox" checked> 🌐 其它国家（不限）</label>
+      </div>
+
+      <div class="free-groups-preview">
+        <div><b>🏠 VPNGate</b><small>默认测速选最快；也可手动切具体节点</small></div>
+        <div><b>挂到策略组</b><small>AI / 流媒体 / YouTube / 电报 / GitHub / 国外网站 / 漏网之鱼</small></div>
+      </div>
+
+      <div id="vgHint" class="free-note">
+        当前未启用。开启并「应用设置 / 推送订阅」后，主订阅里会同时包含 WARP 节点与 VPNGate 家宽组；<code>/api/vpngate</code> 只是内部节点源，不必单独添加。
+      </div>
+
+      <details class="free-source-details">
+        <summary>数据来源与兼容性</summary>
+        <div>
+          <p>主源：VPNGate 官方 CSV <code>https://www.vpngate.net/api/iphone/</code>（失败时回退公开镜像）。</p>
+          <p>国家字段使用官方 <code>CountryShort</code> / <code>CountryLong</code>；机房过滤基于主机名与已知网段启发式规则。</p>
+          <p>客户端需 Mihomo / Clash Meta 支持 OpenVPN 出站。Stash、Surge、小火箭、官方 sing-box 通常无法使用此组。</p>
+        </div>
+      </details>
+    </div>
+
     <details class="advanced-settings">
       <summary>⚙️ MASQUE 高级设置（一般不用改）</summary>
       <div class="advanced-settings-body">
