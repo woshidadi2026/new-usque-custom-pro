@@ -29,6 +29,9 @@
 
 1. Cloudflare KV 在线订阅（推送 / 拉取 / 清除）
 2. 原生 `config.json`、前端设置写入 KV
+3. 新增masque over masque协议，IP固定在美国，可以使用AI服务
+4. 新增vpngate家宽IP
+5. 调整部分默认设置
 
 
 ---
