@@ -1146,6 +1146,8 @@ const CLASH_DOMAIN_RULESETS_S = [
   ["cn", "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"],
   ["category-ai-!cn", "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ai-!cn.mrs"],
   ["youtube", "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/youtube.mrs"],
+  ["google", "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google.mrs"],
+  ["google-play", "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google-play.mrs"],
   ["netflix", "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/netflix.mrs"],
   ["disney", "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/disney.mrs"],
   ["spotify", "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/spotify.mrs"],
@@ -1656,6 +1658,7 @@ function iconUrlS(name) {
     Telegram: "Telegram.png",
     Google: "Google_Search.png",
     Twitter: "Twitter.png",
+    "🐦 X/Grok": "Twitter.png",
     Instagram: "Instagram.png",
     Facebook: "Facebook.png",
     Apple: "Apple_1.png",
@@ -1885,18 +1888,21 @@ function clashGroupsAndRulesS(names, o) {
   groupHeaderS(a, "WARP中转", "select", o);
   a.push("    hidden: true", "    proxies:", '      - "🚀 WARP自动"', '      - "🌎 WARP可手动"');
 
+  // Masque Over Masque：有内层节点则用 MoM，否则回退 WARP自动（保证策略组始终存在）
+  groupHeaderS(a, "🔄 MasqueOverMasque", "url-test", o);
+  a.push(
+    `    url: ${qS(o.healthUrl)}`,
+    `    interval: ${Number(o.healthInterval) || 300}`,
+    `    tolerance: ${Number(o.tolerance) || 30}`,
+    "    timeout: 8000",
+    "    lazy: false",
+    "    max-failed-times: 2",
+    "    proxies:"
+  );
   if (o.momNames && o.momNames.length) {
-    groupHeaderS(a, "🔄 MasqueOverMasque", "url-test", o);
-    a.push(
-      `    url: ${qS(o.healthUrl)}`,
-      `    interval: ${Number(o.healthInterval) || 300}`,
-      `    tolerance: ${Number(o.tolerance) || 30}`,
-      "    timeout: 8000",
-      "    lazy: false",
-      "    max-failed-times: 2",
-      "    proxies:"
-    );
     for (const n of o.momNames) a.push(`      - ${qS(n)}`);
+  } else {
+    a.push('      - "🚀 WARP自动"');
   }
 
   if (freeOn) {
@@ -2128,6 +2134,15 @@ function clashGroupsAndRulesS(names, o) {
   if (freeOn) appendCountryChoicesS(a, o);
   a.push('      - "♻️ 自动选择"', '      - "🌎 WARP可手动"');
 
+  // Google / Google Play 独立策略组
+  groupHeaderS(a, "🔍 Google", "select", o);
+  a.push("    proxies:");
+  // 优先 MoM → WARP直连 → 节点选择（MoM 组始终存在）
+  a.push('      - "🔄 MasqueOverMasque"', '      - "🚀 WARP自动"', '      - "🚀 节点选择"');
+  if (freeOn) appendCountryChoicesS(a, o);
+  appendVgChoicesS(a, o);
+  a.push('      - "🌎 WARP可手动"', '      - "♻️ 自动选择"', '      - "🎯 全球直连"');
+
   groupHeaderS(a, "☁️ Cloudflare中国", "select", o);
   a.push(
     "    proxies:",
@@ -2141,6 +2156,15 @@ function clashGroupsAndRulesS(names, o) {
   groupHeaderS(a, "☁️ CloudflareCDN", "select", o);
   a.push("    proxies:", '      - "🚀 节点选择"', '      - "♻️ 自动选择"');
   if (freeOn) appendCountryChoicesS(a, o);
+  a.push('      - "🌎 WARP可手动"', '      - "🎯 全球直连"');
+
+  // X / Grok 独立策略组（方便调试翻译等问题）
+  groupHeaderS(a, "🐦 X/Grok", "select", o);
+  a.push("    proxies:");
+  if (o.momNames && o.momNames.length) a.push('      - "🔄 MasqueOverMasque"');
+  a.push('      - "🚀 WARP自动"', '      - "🚀 节点选择"');
+  if (o.vgEnabled) a.push('      - "🏠 VPNGate"');
+  if (freeOn) a.push('      - "🌍 免费落地可手动"');
   a.push('      - "🌎 WARP可手动"', '      - "🎯 全球直连"');
 
   groupHeaderS(a, "🌐 国外网站", "select", o);
@@ -2215,9 +2239,29 @@ function clashGroupsAndRulesS(names, o) {
     );
     if (freeOn && o.freeUseWarp) a.push('    proxy: "WARP中转"');
     a.push(
+      "  google:",
+      "    type: http",
+      "    behavior: domain",
+      "    format: mrs",
+      "    interval: 43200",
+      "    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google.mrs"
+    );
+    if (freeOn && o.freeUseWarp) a.push('    proxy: "WARP中转"');
+    a.push(
+      "  google-play:",
+      "    type: http",
+      "    behavior: domain",
+      "    format: mrs",
+      "    interval: 43200",
+      "    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google-play.mrs"
+    );
+    if (freeOn && o.freeUseWarp) a.push('    proxy: "WARP中转"');
+    a.push(
       "",
       "rules:",
       "  - RULE-SET,youtube,▶️ YouTube高速",
+      "  - RULE-SET,google-play,🔍 Google",
+      "  - RULE-SET,google,🔍 Google",
       "  - RULE-SET,cn,🎯 全球直连",
       "  - RULE-SET,cn_ip,🎯 全球直连,no-resolve",
       "  - MATCH,🐟 漏网之鱼",
@@ -2265,6 +2309,16 @@ function clashGroupsAndRulesS(names, o) {
   a.push(
     "  - RULE-SET,private_ip,🎯 全球直连,no-resolve",
     "",
+    "  # X / Grok（独立策略组，方便调试翻译）",
+    "  - DOMAIN-SUFFIX,x.com,🐦 X/Grok",
+    "  - DOMAIN-SUFFIX,api.x.com,🐦 X/Grok",
+    "  - DOMAIN-SUFFIX,twitter.com,🐦 X/Grok",
+    "  - DOMAIN-SUFFIX,twimg.com,🐦 X/Grok",
+    "  - DOMAIN-SUFFIX,x.ai,🐦 X/Grok",
+    "  - DOMAIN-SUFFIX,grok.com,🐦 X/Grok",
+    "  - DOMAIN-SUFFIX,grok.x.com,🐦 X/Grok",
+    "  - DOMAIN,grok.x.com,🐦 X/Grok",
+    "",
     "  # AI",
     "  - DOMAIN-SUFFIX,chatgpt.com,🤖 AI",
     "  - DOMAIN-SUFFIX,openai.com,🤖 AI",
@@ -2295,6 +2349,14 @@ function clashGroupsAndRulesS(names, o) {
     "  # Microsoft / Apple",
     "  - RULE-SET,microsoft,Ⓜ️ 微软服务",
     "  - RULE-SET,apple,🍎 苹果服务",
+    "",
+    "  # Google / Google Play（必须在 cn 之前）",
+    "  - DOMAIN-SUFFIX,services.googleapis.cn,🔍 Google",
+    "  - DOMAIN-SUFFIX,googleapis.cn,🔍 Google",
+    "  - DOMAIN-SUFFIX,gstatic.cn,🔍 Google",
+    "  - DOMAIN-SUFFIX,google.cn,🔍 Google",
+    "  - RULE-SET,google-play,🔍 Google",
+    "  - RULE-SET,google,🔍 Google",
     "",
     "  # Cloudflare 中国站",
     "  - DOMAIN,www.cloudflare-cn.com,☁️ Cloudflare中国",
@@ -2363,6 +2425,13 @@ function buildClashServer(source, sourceInner, uiRaw) {
     "  nameserver:",
     "    - https://doh.pub/dns-query",
     "    - https://dns.alidns.com/dns-query",
+    "  nameserver-policy:",
+    '    "+.cn,+.中国,+.公司,+.网络":',
+    "      - https://doh.pub/dns-query",
+    "      - https://dns.alidns.com/dns-query",
+    '    "+.googleapis.cn,+.gstatic.cn,+.google.cn,+.google.com.cn,+.googlesyndication-cn.com":',
+    "      - https://doh.pub/dns-query",
+    "      - https://dns.alidns.com/dns-query",
     "",
     "proxies:"
   );

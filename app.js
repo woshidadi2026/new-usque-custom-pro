@@ -35,6 +35,8 @@ const CLASH_DOMAIN_RULESETS=[
 ["cn","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs"],
 ["category-ai-!cn","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ai-!cn.mrs"],
 ["youtube","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/youtube.mrs"],
+["google","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google.mrs"],
+["google-play","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google-play.mrs"],
 ["netflix","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/netflix.mrs"],
 ["disney","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/disney.mrs"],
 ["spotify","https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/spotify.mrs"],
@@ -608,7 +610,7 @@ function iconUrl(name){
  const map={
   "自动选择":"Rocket.png","AI自动选择":"ChatGPT.png","地区优选":"Global.png","出口检测":"Speedtest.png","PROXY":"Proxy.png","AI":"ChatGPT.png","YouTube":"YouTube.png","Emby":"Emby.png","TikTok":"TikTok.png",
   "Netflix":"Netflix.png","Disney":"Disney.png","Spotify":"Spotify.png","GitHub":"GitHub.png","🐙 GitHub":"GitHub.png","Telegram":"Telegram.png",
-  "Google":"Google_Search.png","Twitter":"Twitter.png","Instagram":"Instagram.png","Facebook":"Facebook.png","Apple":"Apple_1.png",
+  "Google":"Google_Search.png","🔍 Google":"Google_Search.png","Twitter":"Twitter.png","🐦 X/Grok":"Twitter.png","Instagram":"Instagram.png","Facebook":"Facebook.png","Apple":"Apple_1.png",
   "Microsoft":"Microsoft.png","Steam":"Steam.png","Xbox":"Xbox.png","PlayStation":"PlayStation_1.png","Nintendo":"Nintendo.png",
   "Porn":"Pornhub_1.png","国外网站":"Global.png","🐟 漏网之鱼":"Final.png","Bilibili":"bilibili.png","🔄 MasqueOverMasque":"Global.png","🤖 AI":"ChatGPT.png"
  };
@@ -842,16 +844,18 @@ function clashGroupsAndRules(names,o){
  groupHeader(a,"WARP中转");
  a.push("    hidden: true","    proxies:",'      - "🚀 WARP自动"','      - "🌎 WARP可手动"');
 
- // Masque Over Masque：内层节点 dialer-proxy → 🚀 WARP自动
+ // Masque Over Masque：有内层节点则用 MoM，否则回退 WARP自动（保证策略组始终存在）
+ groupHeader(a,"🔄 MasqueOverMasque","url-test");
+ a.push(
+   `    url: ${q(o.healthUrl)}`,
+   `    interval: ${Number(o.healthInterval)||300}`,
+   `    tolerance: ${Number(o.tolerance)||30}`,
+   "    timeout: 8000","    lazy: false","    max-failed-times: 2","    proxies:"
+ );
  if(o.momNames&&o.momNames.length){
-   groupHeader(a,"🔄 MasqueOverMasque","url-test");
-   a.push(
-     `    url: ${q(o.healthUrl)}`,
-     `    interval: ${Number(o.healthInterval)||300}`,
-     `    tolerance: ${Number(o.tolerance)||30}`,
-     "    timeout: 8000","    lazy: false","    max-failed-times: 2","    proxies:"
-   );
    for(const n of o.momNames)a.push(`      - ${q(n)}`);
+ }else{
+   a.push('      - "🚀 WARP自动"');
  }
 
  if(freeOn){
@@ -1024,6 +1028,15 @@ function clashGroupsAndRules(names,o){
  if(freeOn)appendCountryChoices(a,o);
  a.push('      - "♻️ 自动选择"','      - "🌎 WARP可手动"');
 
+ // Google / Google Play：独立策略组，方便手动切换；默认走节点选择（经 WARP 中转更稳）
+ groupHeader(a,"🔍 Google");
+ a.push("    proxies:");
+ // 优先 MoM → WARP直连 → 节点选择（MoM 组始终存在，见上方）
+ a.push('      - "🔄 MasqueOverMasque"','      - "🚀 WARP自动"','      - "🚀 节点选择"');
+ if(freeOn)appendCountryChoices(a,o);
+ appendVgChoices(a,o);
+ a.push('      - "🌎 WARP可手动"','      - "♻️ 自动选择"','      - "🎯 全球直连"');
+
  groupHeader(a,"☁️ Cloudflare中国");
  a.push("    proxies:",'      - "🚀 WARP自动"','      - "🎯 全球直连"','      - "🚀 节点选择"');
  a.push('      - "🌎 WARP可手动"','      - "♻️ 自动选择"');
@@ -1031,6 +1044,15 @@ function clashGroupsAndRules(names,o){
  groupHeader(a,"☁️ CloudflareCDN");
  a.push("    proxies:",'      - "🚀 节点选择"','      - "♻️ 自动选择"');
  if(freeOn)appendCountryChoices(a,o);
+ a.push('      - "🌎 WARP可手动"','      - "🎯 全球直连"');
+
+ // X / Grok 独立策略组（方便调试翻译等问题）
+ groupHeader(a,"🐦 X/Grok");
+ a.push("    proxies:");
+ if(o.momNames&&o.momNames.length)a.push('      - "🔄 MasqueOverMasque"');
+ a.push('      - "🚀 WARP自动"','      - "🚀 节点选择"');
+ if(o.vgEnabled)a.push('      - "🏠 VPNGate"');
+ if(freeOn)a.push('      - "🌍 免费落地可手动"');
  a.push('      - "🌎 WARP可手动"','      - "🎯 全球直连"');
 
  groupHeader(a,"🌐 国外网站");
@@ -1075,8 +1097,20 @@ function clashGroupsAndRules(names,o){
    );
    if(freeOn&&o.freeUseWarp)a.push('    proxy: "WARP中转"');
    a.push(
+     "  google:","    type: http","    behavior: domain","    format: mrs","    interval: 43200",
+     "    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google.mrs"
+   );
+   if(freeOn&&o.freeUseWarp)a.push('    proxy: "WARP中转"');
+   a.push(
+     "  google-play:","    type: http","    behavior: domain","    format: mrs","    interval: 43200",
+     "    url: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google-play.mrs"
+   );
+   if(freeOn&&o.freeUseWarp)a.push('    proxy: "WARP中转"');
+   a.push(
      "","rules:",
      "  - RULE-SET,youtube,▶️ YouTube高速",
+     "  - RULE-SET,google-play,🔍 Google",
+     "  - RULE-SET,google,🔍 Google",
      "  - RULE-SET,cn,🎯 全球直连",
      "  - RULE-SET,cn_ip,🎯 全球直连,no-resolve",
      "  - MATCH,🐟 漏网之鱼",""
@@ -1117,6 +1151,16 @@ function clashGroupsAndRules(names,o){
  a.push(
    "  - RULE-SET,private_ip,🎯 全球直连,no-resolve",
    "",
+   "  # X / Grok（独立策略组，方便调试翻译）",
+   "  - DOMAIN-SUFFIX,x.com,🐦 X/Grok",
+   "  - DOMAIN-SUFFIX,api.x.com,🐦 X/Grok",
+   "  - DOMAIN-SUFFIX,twitter.com,🐦 X/Grok",
+   "  - DOMAIN-SUFFIX,twimg.com,🐦 X/Grok",
+   "  - DOMAIN-SUFFIX,x.ai,🐦 X/Grok",
+   "  - DOMAIN-SUFFIX,grok.com,🐦 X/Grok",
+   "  - DOMAIN-SUFFIX,grok.x.com,🐦 X/Grok",
+   "  - DOMAIN,grok.x.com,🐦 X/Grok",
+   "",
    "  # AI",
    "  - DOMAIN-SUFFIX,chatgpt.com,🤖 AI",
    "  - DOMAIN-SUFFIX,openai.com,🤖 AI",
@@ -1147,6 +1191,15 @@ function clashGroupsAndRules(names,o){
    "  # Microsoft / Apple",
    "  - RULE-SET,microsoft,Ⓜ️ 微软服务",
    "  - RULE-SET,apple,🍎 苹果服务",
+   "",
+   "  # Google / Google Play（必须在 cn 之前，避免 services.googleapis.cn 等被国内规则截胡）",
+   "  # google-play 含 Play 商店主域名与国内 CDN；google 含其余 Google 服务",
+   "  - DOMAIN-SUFFIX,services.googleapis.cn,🔍 Google",
+   "  - DOMAIN-SUFFIX,googleapis.cn,🔍 Google",
+   "  - DOMAIN-SUFFIX,gstatic.cn,🔍 Google",
+   "  - DOMAIN-SUFFIX,google.cn,🔍 Google",
+   "  - RULE-SET,google-play,🔍 Google",
+   "  - RULE-SET,google,🔍 Google",
    "",
    "  # Cloudflare 中国站（优先 WARP → 直连 → 节点）",
    "  - DOMAIN,www.cloudflare-cn.com,☁️ Cloudflare中国",
@@ -1188,7 +1241,15 @@ function buildClash(){
   "dns:","  enable: true","  ipv6: true","  enhanced-mode: fake-ip","  listen: 0.0.0.0:7874","  fake-ip-range: 198.18.0.1/16",
   "  fake-ip-filter:",'    - "*.lan"','    - "*.local"','    - "*.arpa"','    - "*.msftncsi.com"','    - "www.msftconnecttest.com"',
   "  default-nameserver:","    - 223.5.5.5","    - 223.6.6.6",
+  // 国内 DoH；nameserver-policy 只用域名后缀，避免依赖本地 geosite.dat
   "  nameserver:","    - https://doh.pub/dns-query","    - https://dns.alidns.com/dns-query",
+  "  nameserver-policy:",
+  '    "+.cn,+.中国,+.公司,+.网络":',
+  "      - https://doh.pub/dns-query",
+  "      - https://dns.alidns.com/dns-query",
+  '    "+.googleapis.cn,+.gstatic.cn,+.google.cn,+.google.com.cn,+.googlesyndication-cn.com":',
+  "      - https://doh.pub/dns-query",
+  "      - https://dns.alidns.com/dns-query",
   "","proxies:"
  );
  pairs.forEach(([server,port],i)=>{const n=nodeName(server,port,i);names.push(n);makeNode(a,n,server,port,o)});
