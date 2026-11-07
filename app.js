@@ -1109,6 +1109,7 @@ function clashGroupsAndRules(names,o){
    a.push(
      "","rules:",
      "  - RULE-SET,youtube,▶️ YouTube高速",
+     "  - DOMAIN,accounts.google.com,🔍 Google",
      "  - RULE-SET,google-play,🔍 Google",
      "  - RULE-SET,google,🔍 Google",
      "  - RULE-SET,cn,🎯 全球直连",
@@ -1198,6 +1199,8 @@ function clashGroupsAndRules(names,o){
    "  - DOMAIN-SUFFIX,googleapis.cn,🔍 Google",
    "  - DOMAIN-SUFFIX,gstatic.cn,🔍 Google",
    "  - DOMAIN-SUFFIX,google.cn,🔍 Google",
+   "  - DOMAIN,accounts.google.com,🔍 Google",
+
    "  - RULE-SET,google-play,🔍 Google",
    "  - RULE-SET,google,🔍 Google",
    "",
