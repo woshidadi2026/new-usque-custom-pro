@@ -196,6 +196,11 @@
             <option value="all">全部协议（实验）</option>
           </select>
         </label>
+
+        <label class="switch-pro">
+          <input id="freeMultiSource" type="checkbox" checked>
+          <span>多源合并：再加 4 个公共源一起拉取、测活竞速（可用节点更多）</span>
+        </label>
       </div>
 
       <div class="country-select">
@@ -251,11 +256,35 @@
       </div>
 
       <details class="free-source-details">
-        <summary>查看节点来源与说明</summary>
+        <summary>📚 查看节点来源与说明（内置 5 个源 · 可添加自定义源）</summary>
         <div>
-          <p>主源：<code>Au1rxx/free-vpn-subscriptions</code>。按国家提供 Clash YAML，并持续自动更新。</p>
-          <p>默认稳定模式会排除 Hysteria2 / TUIC / WireGuard / HTTP / SOCKS 等，更优先测试 VLESS / VMess / Trojan / Shadowsocks。</p>
-          <a href="https://github.com/Au1rxx/free-vpn-subscriptions" target="_blank" rel="noopener">打开节点源项目</a>
+          <p><b>内置节点源</b>（共 5 个，全部一起拉取、在同一批自动测速组里竞速，哪个快用哪个）：</p>
+          <ul style="padding-left:18px;margin:8px 0;line-height:1.7">
+            <li><b>主源 · Au1rxx/free-vpn-subscriptions</b>（按国家 Clash YAML，每小时更新）
+              <a href="https://github.com/Au1rxx/free-vpn-subscriptions" target="_blank" rel="noopener">项目</a><br>
+              <code>raw.githubusercontent.com/Au1rxx/free-vpn-subscriptions/main/output/by-country/clash-国家代码.yaml</code>
+              （按上方勾选的国家逐个拉取）
+            </li>
+            <li><b>ermaozi</b> <a href="https://github.com/ermaozi/get_subscribe" target="_blank" rel="noopener">项目</a><br>
+              <code>raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/v2ray.txt</code>
+            </li>
+            <li><b>cbusifabcap</b> <a href="https://github.com/cbusifabcap/daily_free_vpn" target="_blank" rel="noopener">项目</a><br>
+              <code>raw.githubusercontent.com/cbusifabcap/daily_free_vpn/main/Z.txt</code>
+            </li>
+            <li><b>LeilaoMi真测</b> <a href="https://github.com/LeilaoMi/AutoMergePublicNodes-Optimized" target="_blank" rel="noopener">项目</a><br>
+              <code>raw.githubusercontent.com/LeilaoMi/AutoMergePublicNodes-Optimized/main/output/global.urls</code>
+            </li>
+            <li><b>ALIILAPRO</b> <a href="https://github.com/ALIILAPRO/v2rayNG-Config" target="_blank" rel="noopener">项目</a><br>
+              <code>raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/sub.txt</code>
+            </li>
+          </ul>
+          <p>后 4 个源受上方「多源合并」开关控制（默认开）；它们不分国家，只进「免费落地自动 / AI / 流媒体」总组，不进国家组。不同源之间可能有个别重复节点，测速会自动选最快的一个，不影响使用。</p>
+          <p>默认稳定模式会排除 Hysteria2 / TUIC / WireGuard / HTTP / SOCKS 等，更优先测试 VLESS / VMess / Trojan / Shadowsocks；想要全部协议，把上方「协议筛选」切到「全部协议」。所有源都由你的 Clash 客户端每小时自动重新拉取最新节点，本页面不保存、也不中转任何节点。</p>
+          <div class="custom-ip-route-panel" style="margin-top:12px">
+            <label for="freeCustomSources"><b>➕ 添加自定义节点源</b>（每行一个订阅地址，Clash YAML 或链接列表都行；留空不用，最多 10 个）</label>
+            <textarea id="freeCustomSources" rows="3" placeholder="https://example.com/my-nodes.yaml"></textarea>
+            <p class="custom-source-tip" style="margin-top:8px;color:#91aaba;font-size:11px;line-height:1.6">填了自定义源会和内置源一起拉取测速；只填自定义源、不勾任何国家也能单独使用。想换掉内置源：关掉上方「多源合并」并取消国家勾选、只留自定义源即可。</p>
+          </div>
         </div>
       </details>
     </div>

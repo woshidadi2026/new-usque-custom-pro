@@ -1352,6 +1352,19 @@ function optsFromUi(ui, source) {
     freeUseWarp: !!sv(ui, "freeUseWarp", true),
     freeScope: String(sv(ui, "freeScope", "ai-streaming")),
     freeProtocolMode: String(sv(ui, "freeProtocolMode", "stable")),
+    freeMultiSource: !!sv(ui, "freeMultiSource", true),
+    freeCustomSources: (() => {
+      const raw = String(sv(ui, "freeCustomSources", "") || "");
+      const seen = new Set(), out = [];
+      for (const line of raw.split(/\r?\n/)) {
+        const url = line.trim();
+        if (!/^https?:\/\/\S+$/i.test(url) || seen.has(url)) continue;
+        seen.add(url);
+        out.push({ key: String(out.length + 1), label: `自定义${out.length + 1}`, url });
+        if (out.length >= 10) break;
+      }
+      return out;
+    })(),
     freeCountries,
     vgEnabled: !!sv(ui, "vgEnabled", true),
     vgUseWarp: !!sv(ui, "vgUseWarp", true),
@@ -1693,8 +1706,46 @@ function freeProviderIdS(code, kind) {
 function freeProviderUrlS(code) {
   return `https://raw.githubusercontent.com/Au1rxx/free-vpn-subscriptions/main/output/by-country/clash-${code}.yaml`;
 }
+// 多源合并：主源 Au1rxx 之外的 4 个公共链接源（与前端 app.js 保持一致）
+const FREE_MIX_SOURCES_S = [
+  { key: "ermaozi", label: "ermaozi", url: "https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/v2ray.txt" },
+  { key: "cbusifab", label: "cbusifabcap", url: "https://raw.githubusercontent.com/cbusifabcap/daily_free_vpn/main/Z.txt" },
+  { key: "leilao", label: "LeilaoMi真测", url: "https://raw.githubusercontent.com/LeilaoMi/AutoMergePublicNodes-Optimized/main/output/global.urls" },
+  { key: "aliilapro", label: "ALIILAPRO", url: "https://raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/sub.txt" }
+];
+function mixProviderIdS(srcKey, kind = "general", prefix = "FREE-MIX") {
+  return `${prefix}-${String(srcKey).toUpperCase()}-${(kind || "general").toUpperCase()}`;
+}
+function appendOneMixProviderS(a, o, src, kind, prefix = "FREE-MIX", seg = "free-mix", icon = "🌐") {
+  const hc = providerHealthS(kind);
+  const pid = mixProviderIdS(src.key, kind, prefix);
+  a.push(
+    `  ${pid}:`,
+    "    type: http",
+    `    url: ${qS(src.url)}`,
+    `    path: ${qS(`./providers/${seg}-${src.key}-${kind}.yaml`)}`,
+    "    interval: 3600",
+    "    size-limit: 8388608"
+  );
+  if (o.freeUseWarp) a.push('    proxy: "WARP中转"');
+  if (o.freeProtocolMode === "stable") {
+    a.push('    exclude-type: "hysteria2|tuic|wireguard|http|https|socks4|socks5"');
+  }
+  a.push(
+    "    health-check:",
+    "      enable: true",
+    `      url: ${qS(hc.url)}`,
+    `      expected-status: ${qS(hc.expected)}`,
+    `      interval: ${hc.interval}`,
+    `      timeout: ${hc.timeout}`,
+    "      lazy: true",
+    "    override:",
+    `      additional-prefix: ${qS(`${icon} ${src.label} | `)}`
+  );
+  if (o.freeUseWarp) a.push('      dialer-proxy: "WARP中转"');
+}
 function freeForServiceS(o, name) {
-  if (!o.freeEnabled || !o.freeCountries.length) return false;
+  if (!o.freeEnabled || (!o.freeCountries.length && !(o.freeCustomSources || []).length)) return false;
   const s = o.freeScope || "ai-streaming";
   if (s === "all-foreign") return name !== "Bilibili";
   if (s === "ai-only") return name === "AI";
@@ -1748,12 +1799,27 @@ function appendOneFreeProviderS(a, o, code, kind) {
 }
 function appendFreeProvidersS(a, o) {
   if (!o.freeEnabled) return;
-  if (!o.freeCountries.length) throw new Error("已启用免费落地，但没有选择任何国家/地区");
+  const customs = Array.isArray(o.freeCustomSources) ? o.freeCustomSources : [];
+  if (!o.freeCountries.length && !customs.length) {
+    throw new Error("已启用免费落地，但没有选择任何国家/地区，也没有填写自定义源");
+  }
   a.push("", "proxy-providers:");
   for (const code of o.freeCountries) {
     appendOneFreeProviderS(a, o, code, "general");
     appendOneFreeProviderS(a, o, code, "ai");
     appendOneFreeProviderS(a, o, code, "stream");
+  }
+  if (o.freeMultiSource) {
+    for (const src of FREE_MIX_SOURCES_S) {
+      appendOneMixProviderS(a, o, src, "general");
+      appendOneMixProviderS(a, o, src, "ai");
+      appendOneMixProviderS(a, o, src, "stream");
+    }
+  }
+  for (const src of customs) {
+    appendOneMixProviderS(a, o, src, "general", "FREE-CUSTOM", "free-custom", "🧩");
+    appendOneMixProviderS(a, o, src, "ai", "FREE-CUSTOM", "free-custom", "🧩");
+    appendOneMixProviderS(a, o, src, "stream", "FREE-CUSTOM", "free-custom", "🧩");
   }
 }
 
@@ -1842,9 +1908,14 @@ function appendVpngateGroupsS(a, o) {
   groupHeaderS(a, "🏠 VPNGate", "select", o);
   a.push("    proxies:", '      - "🏠 VPNGate测速"', "    use:", `      - ${qS(pid)}`);
 }
-function appendProviderUseS(a, o, kind, indent) {
-  indent = indent || "      ";
+function appendProviderUseS(a, o, kind = "general", indent = "      ") {
   for (const code of o.freeCountries) a.push(`${indent}- ${qS(freeProviderIdS(code, kind))}`);
+  if (o.freeMultiSource) {
+    for (const src of FREE_MIX_SOURCES_S) a.push(`${indent}- ${qS(mixProviderIdS(src.key, kind))}`);
+  }
+  for (const src of o.freeCustomSources || []) {
+    a.push(`${indent}- ${qS(mixProviderIdS(src.key, kind, "FREE-CUSTOM"))}`);
+  }
 }
 function countryRuleNameS(code) {
   const meta = FREE_COUNTRY_META_S[code] || { flag: "🌐" };
@@ -1866,7 +1937,7 @@ function controllerHostPortS(url) {
 
 function clashGroupsAndRulesS(names, o) {
   const a = ["", "proxy-groups:"];
-  const freeOn = o.freeEnabled && o.freeCountries.length > 0;
+  const freeOn = o.freeEnabled && (o.freeCountries.length > 0 || (o.freeCustomSources || []).length > 0);
 
   groupHeaderS(a, "🚀 WARP自动", "url-test", o);
   a.push(
@@ -2425,14 +2496,21 @@ function buildClashServer(source, sourceInner, uiRaw) {
     "  default-nameserver:",
     "    - 223.5.5.5",
     "    - 223.6.6.6",
-    "  nameserver:",
+    "    - 1.1.1.1",
+    "  proxy-server-nameserver:",
     "    - https://doh.pub/dns-query",
     "    - https://dns.alidns.com/dns-query",
+    "  nameserver:",
+    "    - https://cm3if9n4aw.cloudflare-gateway.com/dns-query#🚀 WARP自动",
+    "    - https://cm3if9n4aw.cloudflare-gateway.com/dns-query",
     "  nameserver-policy:",
     '    "+.cn,+.中国,+.公司,+.网络":',
     "      - https://doh.pub/dns-query",
     "      - https://dns.alidns.com/dns-query",
     '    "+.googleapis.cn,+.gstatic.cn,+.google.cn,+.google.com.cn,+.googlesyndication-cn.com":',
+    "      - https://doh.pub/dns-query",
+    "      - https://dns.alidns.com/dns-query",
+    '    "+.cloudflare-gateway.com,+.cloudflare.com":',
     "      - https://doh.pub/dns-query",
     "      - https://dns.alidns.com/dns-query",
     "",

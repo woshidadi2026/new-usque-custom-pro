@@ -446,6 +446,8 @@ function opts(){
   freeUseWarp:$("freeUseWarp").checked,
   freeScope:$("freeScope").value,
   freeProtocolMode:$("freeProtocolMode").value,
+  freeMultiSource:!!$("freeMultiSource")?.checked,
+  freeCustomSources:parseFreeCustomSources(),
   freeCountries:uniq([...baseFreeCountries,...($("customIpRoutingEnabled")?.checked?customParsed.countries:[])]),
   // VPNGate 家宽（独立代理组，不与「免费落地」混用）
   vgEnabled:!!$("vgEnabled")?.checked,
@@ -637,8 +639,60 @@ function freeProviderId(code,kind="general"){return `FREE-${code}-${kind.toUpper
 function freeProviderUrl(code){
  return `https://raw.githubusercontent.com/Au1rxx/free-vpn-subscriptions/main/output/by-country/clash-${code}.yaml`;
 }
+// 多源合并：主源 Au1rxx（按国家）之外，再并入 4 个公共链接源（无国家归属）。
+// 与主源一样走 mihomo proxy-provider：客户端分别拉取、在同一批 url-test 组里
+// 一起测活竞速。这些源是 vless/vmess/trojan/ss 等链接列表，mihomo 可直接解析。
+const FREE_MIX_SOURCES=[
+ {key:"ermaozi",label:"ermaozi",url:"https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/v2ray.txt"},
+ {key:"cbusifab",label:"cbusifabcap",url:"https://raw.githubusercontent.com/cbusifabcap/daily_free_vpn/main/Z.txt"},
+ {key:"leilao",label:"LeilaoMi真测",url:"https://raw.githubusercontent.com/LeilaoMi/AutoMergePublicNodes-Optimized/main/output/global.urls"},
+ {key:"aliilapro",label:"ALIILAPRO",url:"https://raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/sub.txt"}
+];
+function mixProviderId(srcKey,kind="general",prefix="FREE-MIX"){return `${prefix}-${srcKey.toUpperCase()}-${kind.toUpperCase()}`}
+function appendOneMixProvider(a,o,src,kind,prefix="FREE-MIX",seg="free-mix",icon="🌐"){
+ const hc=providerHealth(kind);
+ const pid=mixProviderId(src.key,kind,prefix);
+ a.push(
+   `  ${pid}:`,
+   "    type: http",
+   `    url: ${q(src.url)}`,
+   `    path: ${q(`./providers/${seg}-${src.key}-${kind}.yaml`)}`,
+   "    interval: 3600",
+   "    size-limit: 8388608"
+ );
+ if(o.freeUseWarp)a.push('    proxy: "WARP中转"');
+ if(o.freeProtocolMode==="stable"){
+   a.push('    exclude-type: "hysteria2|tuic|wireguard|http|https|socks4|socks5"');
+ }
+ a.push(
+   "    health-check:",
+   "      enable: true",
+   `      url: ${q(hc.url)}`,
+   `      expected-status: ${q(hc.expected)}`,
+   `      interval: ${hc.interval}`,
+   `      timeout: ${hc.timeout}`,
+   "      lazy: true",
+   "    override:",
+   `      additional-prefix: ${q(`${icon} ${src.label} | `)}`
+ );
+ if(o.freeUseWarp)a.push('      dialer-proxy: "WARP中转"');
+}
+// 自定义源：面板里每行一个 http(s) 订阅地址（Clash YAML 或链接列表均可），
+// 去重、去空行、最多 10 个；与内置多源走同一套 provider 生成逻辑。
+function parseFreeCustomSources(){
+ const raw=$("freeCustomSources")?.value||"";
+ const seen=new Set(),out=[];
+ for(const line of String(raw).split(/\r?\n/)){
+   const url=line.trim();
+   if(!/^https?:\/\/\S+$/i.test(url)||seen.has(url))continue;
+   seen.add(url);
+   out.push({key:String(out.length+1),label:`自定义${out.length+1}`,url});
+   if(out.length>=10)break;
+ }
+ return out;
+}
 function freeForService(o,name){
- if(!o.freeEnabled||!o.freeCountries.length)return false;
+ if(!o.freeEnabled||(!o.freeCountries.length&&!(o.freeCustomSources||[]).length))return false;
  const s=o.freeScope||"ai-streaming";
  if(s==="all-foreign")return name!=="Bilibili";
  if(s==="ai-only")return name==="AI";
@@ -701,7 +755,7 @@ function appendOneFreeProvider(a,o,code,kind){
 }
 function appendFreeProviders(a,o){
  if(!o.freeEnabled)return;
- if(!o.freeCountries.length)throw new Error("已启用免费落地，但没有选择任何国家/地区");
+ if(!o.freeCountries.length&&!(o.freeCustomSources||[]).length)throw new Error("已启用免费落地，但没有选择任何国家/地区，也没有填写自定义源");
  a.push("","proxy-providers:");
  for(const code of o.freeCountries){
    // Same source, three independent health gates:
@@ -709,6 +763,18 @@ function appendFreeProviders(a,o){
    appendOneFreeProvider(a,o,code,"general");
    appendOneFreeProvider(a,o,code,"ai");
    appendOneFreeProvider(a,o,code,"stream");
+ }
+ if(o.freeMultiSource){
+   for(const src of FREE_MIX_SOURCES){
+     appendOneMixProvider(a,o,src,"general");
+     appendOneMixProvider(a,o,src,"ai");
+     appendOneMixProvider(a,o,src,"stream");
+   }
+ }
+ for(const src of o.freeCustomSources||[]){
+   appendOneMixProvider(a,o,src,"general","FREE-CUSTOM","free-custom","🧩");
+   appendOneMixProvider(a,o,src,"ai","FREE-CUSTOM","free-custom","🧩");
+   appendOneMixProvider(a,o,src,"stream","FREE-CUSTOM","free-custom","🧩");
  }
 }
 
@@ -788,6 +854,8 @@ function appendVpngateGroups(a,o){
 }
 function appendProviderUse(a,o,kind="general",indent="      "){
  for(const code of o.freeCountries)a.push(`${indent}- ${q(freeProviderId(code,kind))}`);
+ if(o.freeMultiSource)for(const src of FREE_MIX_SOURCES)a.push(`${indent}- ${q(mixProviderId(src.key,kind))}`);
+ for(const src of o.freeCustomSources||[])a.push(`${indent}- ${q(mixProviderId(src.key,kind,"FREE-CUSTOM"))}`);
 }
 
 function countryRuleName(code){
@@ -825,7 +893,7 @@ function appendCustomIpRules(a,o){
 
 function clashGroupsAndRules(names,o){
  const a=["","proxy-groups:"];
- const freeOn=o.freeEnabled&&o.freeCountries.length>0;
+ const freeOn=o.freeEnabled&&(o.freeCountries.length>0||(o.freeCustomSources||[]).length>0);
 
  groupHeader(a,"🚀 WARP自动","url-test");
  a.push(
@@ -1243,14 +1311,24 @@ function buildClash(){
  a.push("",
   "dns:","  enable: true","  ipv6: true","  enhanced-mode: fake-ip","  listen: 0.0.0.0:7874","  fake-ip-range: 198.18.0.1/16",
   "  fake-ip-filter:",'    - "*.lan"','    - "*.local"','    - "*.arpa"','    - "*.msftncsi.com"','    - "www.msftconnecttest.com"',
-  "  default-nameserver:","    - 223.5.5.5","    - 223.6.6.6",
-  // 国内 DoH；nameserver-policy 只用域名后缀，避免依赖本地 geosite.dat
-  "  nameserver:","    - https://doh.pub/dns-query","    - https://dns.alidns.com/dns-query",
+  // bootstrap：必须用 IP，解析 DoH 域名本身
+  "  default-nameserver:","    - 223.5.5.5","    - 223.6.6.6","    - 1.1.1.1",
+  // 解析代理节点域名：固定国内 DoH，避免 Gateway 不可达时节点连不上
+  "  proxy-server-nameserver:","    - https://doh.pub/dns-query","    - https://dns.alidns.com/dns-query",
+  // 默认（国外站）：Cloudflare Gateway 加密 DoH；优先经 WARP 出站
+  "  nameserver:",
+  "    - https://cm3if9n4aw.cloudflare-gateway.com/dns-query#🚀 WARP自动",
+  "    - https://cm3if9n4aw.cloudflare-gateway.com/dns-query",
+  // 国内域名：国内加密 DoH，不走代理
   "  nameserver-policy:",
   '    "+.cn,+.中国,+.公司,+.网络":',
   "      - https://doh.pub/dns-query",
   "      - https://dns.alidns.com/dns-query",
   '    "+.googleapis.cn,+.gstatic.cn,+.google.cn,+.google.com.cn,+.googlesyndication-cn.com":',
+  "      - https://doh.pub/dns-query",
+  "      - https://dns.alidns.com/dns-query",
+  // Gateway DoH 域名本身走国内 DoH 解析，避免鸡生蛋
+  '    "+.cloudflare-gateway.com,+.cloudflare.com":',
   "      - https://doh.pub/dns-query",
   "      - https://dns.alidns.com/dns-query",
   "","proxies:"
@@ -1700,8 +1778,11 @@ function updateFreeEgressHint(){
  const countries=selectedFreeLabels();
  const scope=$("freeScope").selectedOptions?.[0]?.textContent||$("freeScope").value;
  const chain=$("freeUseWarp").checked?"订阅下载 + 节点连接均经 WARP/MASQUE":"直接下载 / 直接连接免费节点";
+ const multi=$("freeMultiSource")?.checked?"；多源合并已开（Au1rxx + 4 公共源）":"；仅主源 Au1rxx";
+ const customN=($("freeCustomSources")?.value||"").split(/\r?\n/).filter(x=>/^https?:\/\//i.test(x.trim())).length;
+ const custom=customN?`；自定义源 ${customN} 个`:"";
  $("freeEgressHint").textContent=enabled
-   ?`已启用：${scope}；地区：${countries.join(" / ")||"未选择"}；${chain}。`
+   ?`已启用：${scope}；地区：${countries.join(" / ")||"未选择"}；${chain}${multi}${custom}。`
    :`当前未启用：生成结果与原版一致。启用后 Clash 会自动拉取所选地区的公开免费节点。`;
 }
 
@@ -1748,7 +1829,7 @@ function updateChatgptRouteHint(){
 
 /* ---------------- 界面设置持久化（KV） ---------------- */
 const SETTINGS_FIELD_IDS = [
-  "freeEgressEnabled","freeUseWarp","freeScope","freeProtocolMode",
+  "freeEgressEnabled","freeUseWarp","freeScope","freeProtocolMode","freeMultiSource","freeCustomSources",
   "freeUS","freeJP","freeSG","freeHK","freeTW","freeKR",
   "vgEnabled","vgUseWarp","vgResidential","vgLimit",
   "vgJP","vgKR","vgUS","vgTW","vgHK","vgSG","vgDE","vgGB","vgOther",
@@ -1863,6 +1944,8 @@ function resetRecommended(){
  $("nodeTag").value="CDN";$("profileName").value="MASQUE-Pro";$("nodeCountMode").value="13";$("customNodeCount").value="100";$("nodeBuildMode").value="balanced";$("extraEndpoints").value="";$("nodeNaming").value="detail";
  $("udpForward").checked=true;$("remoteDns").checked=true;$("autoSelect").checked=true;$("showIcons").checked=true;$("adBlock").checked=true;$("includeTestEndpoints").checked=true;$("dedupeNodes").checked=true;$("h2ExtendedPool").checked=true;
  $("freeEgressEnabled").checked=true;$("freeUseWarp").checked=true;$("freeScope").value="ai-streaming";$("freeProtocolMode").value="stable";
+ if($("freeMultiSource"))$("freeMultiSource").checked=true;
+ if($("freeCustomSources"))$("freeCustomSources").value="";
  $("freeUS").checked=true;$("freeJP").checked=true;$("freeSG").checked=true;$("freeHK").checked=false;$("freeTW").checked=false;$("freeKR").checked=false;
  $("vgEnabled").checked=true;$("vgUseWarp").checked=true;$("vgResidential").checked=true;$("vgLimit").value="15";
  $("vgJP").checked=true;$("vgKR").checked=true;$("vgUS").checked=true;$("vgTW").checked=true;$("vgHK").checked=true;$("vgSG").checked=true;$("vgDE").checked=true;$("vgGB").checked=true;$("vgOther").checked=true;
@@ -1895,13 +1978,13 @@ function syncConditional(){
  if($("networkMode").value==="h3-l4proxy")$("udpForward").checked=false;
 }
 
-const selectSettingIds=["freeEgressEnabled","freeUseWarp","freeScope","freeProtocolMode","freeUS","freeJP","freeSG","freeHK","freeTW","freeKR","vgEnabled","vgUseWarp","vgResidential","vgLimit","vgJP","vgKR","vgUS","vgTW","vgHK","vgSG","vgDE","vgGB","vgOther","customIpRoutingEnabled","endpointPreset","portPreset","sniPreset","dnsPreset","innerIpMode","networkMode","stackMode","ccMode","outerCc","bbrProfile","mtuPreset","handshakeTimeout","ruleMode","healthUrl","healthInterval","healthTolerance","aiHealthMode","chatgptRouteMode","otherAiRouteMode","chatgptDirectFallback","egressCountry1","egressCountry2","egressCountry3","egressChatgptFirst","egressApplyAll","enableControllerApi","nodeCountMode","nodeBuildMode","nodeNaming","udpForward","remoteDns","autoSelect","showIcons","adBlock","includeTestEndpoints","dedupeNodes","h2ExtendedPool"];
+const selectSettingIds=["freeEgressEnabled","freeUseWarp","freeScope","freeProtocolMode","freeMultiSource","freeUS","freeJP","freeSG","freeHK","freeTW","freeKR","vgEnabled","vgUseWarp","vgResidential","vgLimit","vgJP","vgKR","vgUS","vgTW","vgHK","vgSG","vgDE","vgGB","vgOther","customIpRoutingEnabled","endpointPreset","portPreset","sniPreset","dnsPreset","innerIpMode","networkMode","stackMode","ccMode","outerCc","bbrProfile","mtuPreset","handshakeTimeout","ruleMode","healthUrl","healthInterval","healthTolerance","aiHealthMode","chatgptRouteMode","otherAiRouteMode","chatgptDirectFallback","egressCountry1","egressCountry2","egressCountry3","egressChatgptFirst","egressApplyAll","enableControllerApi","nodeCountMode","nodeBuildMode","nodeNaming","udpForward","remoteDns","autoSelect","showIcons","adBlock","includeTestEndpoints","dedupeNodes","h2ExtendedPool"];
 selectSettingIds.forEach(id=>{
  const el=$(id); if(!el)return;
  el.addEventListener("change",()=>{
  syncConditional();updateEstimate();
  if(id==="chatgptRouteMode"||id==="otherAiRouteMode")updateChatgptRouteHint();
- if(["freeEgressEnabled","freeUseWarp","freeScope","freeProtocolMode","freeUS","freeJP","freeSG","freeHK","freeTW","freeKR"].includes(id))updateFreeEgressHint();
+ if(["freeEgressEnabled","freeUseWarp","freeScope","freeProtocolMode","freeMultiSource","freeUS","freeJP","freeSG","freeHK","freeTW","freeKR"].includes(id))updateFreeEgressHint();
  if(["vgEnabled","vgUseWarp","vgResidential","vgLimit","vgJP","vgKR","vgUS","vgTW","vgHK","vgSG","vgDE","vgGB","vgOther"].includes(id))updateVgHint();
  if(id==="customIpRoutingEnabled")updateCustomIpRoutingHint();
  markDirty(id,true);
@@ -1915,7 +1998,7 @@ selectSettingIds.forEach(id=>{
  }
  });
 });
-const textSettingIds=["customIpRoutingRules","customEndpoint","customPort","customSni","customDns","customInner4","customInner6","customMtu","customNodeCount","extraEndpoints","controllerUrl","controllerSecret","localProxyUrl","nodeTag","profileName"];
+const textSettingIds=["freeCustomSources","customIpRoutingRules","customEndpoint","customPort","customSni","customDns","customInner4","customInner6","customMtu","customNodeCount","extraEndpoints","controllerUrl","controllerSecret","localProxyUrl","nodeTag","profileName"];
 textSettingIds.forEach(id=>$(id).addEventListener("change",()=>{
  if(id==="customIpRoutingRules")updateCustomIpRoutingHint();
  updateEstimate();
